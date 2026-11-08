@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <base target="_top">
 <meta charset="utf-8">
@@ -736,6 +736,9 @@ dialog.wide { max-width: min(980px, calc(100vw - 16px)); }
   .frow .fc { grid-column: 1 / -1; }
   .frow .chip { justify-self: start; }
 }
+.fpager { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: 13px; }
+.fpager span:last-child { display: flex; gap: 8px; }
+.sheet.cert .cert-logos.beside-qr { gap: 6pt; z-index: 2; }
 
 </style>
 <style id="page-style">@page { size: A4; margin: 0; }</style>
@@ -1760,15 +1763,15 @@ function showInstall() {
   });
 }
 function cycleTheme() {
-  const order = ['system', 'light', 'dark'];
-  const cur = store.get('theme', 'system');
+  const order = ['light', 'dark', 'system'];
+  const cur = store.get('theme', 'light');
   const nx = order[(order.indexOf(cur) + 1) % 3];
   store.set('theme', nx);
   applyTheme();
   toast('Theme: ' + nx);
 }
 function applyTheme() {
-  const t = store.get('theme', 'system');
+  const t = store.get('theme', 'light');   // white by default; dark or device setting only when chosen
   if (t === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', t);
 }
@@ -2651,7 +2654,7 @@ const LOGO_PLACES = [
   ['header', 'Beside the header (left and right of the seal)'], ['top', 'In a row under the header'],
   ['corners', 'Top corners (left and right)'], ['topleft', 'Top-left corner'], ['topright', 'Top-right corner'],
   ['sides', 'Down the left and right sides'], ['left', 'Down the left side'], ['right', 'Down the right side'],
-  ['bottom', 'In a row above the footer'], ['bottomleft', 'Bottom-left corner'], ['watermark', 'Large and faded behind the text']
+  ['bottom', 'In a row above the footer'], ['bottomleft', 'Bottom-left corner'], ['qr', 'Beside the QR code (just before it)'], ['watermark', 'Large and faded behind the text']
 ];
 const LOGO_SIZES = { S: 40, M: 58, L: 72, XL: 90 };
 function buildCertSheet(o) {
@@ -2676,7 +2679,7 @@ function buildCertSheet(o) {
   const lg = (u, px) => '<div class="lg" style="width:' + (px || sz) + 'pt;height:' + (px || sz) + 'pt;background-image:url(' + safeImg(u) + ')"></div>';
   const box = (cls, style, list, px) => '<div class="cert-logos ' + cls + '" style="' + style + '">' + list.map((u) => lg(u, px)).join('') + '</div>';
   const halves = (list) => { const n = Math.ceil(list.length / 2); return [list.slice(0, n), list.slice(n)]; };
-  let logos = '', padL = 0, padR = 0, bottomRow = [];
+  let logos = '', padL = 0, padR = 0, bottomRow = [], qrRow = null;
   Object.keys(groups).forEach((pl) => {
     const L = groups[pl];
     const cornerTop = d.header === 'none' ? 44 : 40;
@@ -2699,6 +2702,8 @@ function buildCertSheet(o) {
       const hv = pl === 'sides' ? halves(L) : pl === 'left' ? [L, []] : [[], L];
       if (hv[0].length) { logos += box('col', 'left:' + edge + 'pt', hv[0]); padL = edge + sz + 10; }
       if (hv[1].length) { logos += box('col', 'right:' + (d.border === 'ribbon' ? 46 : edge) + 'pt', hv[1]); padR = 46 + sz + 10; }
+    } else if (pl === 'qr') {
+      qrRow = L;
     } else if (pl === 'bottom' || pl === 'bottomleft') {
       bottomRow.push([pl, L]);
     } else if (pl === 'watermark') {
@@ -2725,6 +2730,12 @@ function buildCertSheet(o) {
     logos += box(g[0] === 'bottom' ? 'row' : 'corner', 'bottom:' + logoB + 'pt' + (g[0] === 'bottomleft' ? ';left:' + edge + 'pt' : ''), g[1]);
   });
   if (bottomRow.length) bottom += sz - 8;
+  if (qrRow) {
+    // same height as the QR code, bottoms lined up, ending just left of it
+    const lf = br.footerStyle === 'letterhead';
+    const qs = lf ? 50 : 52, qb = lf ? 50.5 : 44, qr0 = lf ? 56.2 : 42;
+    logos += box('beside-qr', 'right:' + (qr0 + qs + 8) + 'pt;bottom:' + qb + 'pt;height:' + qs + 'pt', qrRow, Math.min(sz, qs));
+  }
   const sg = sigBlock(d, o.merge);
   const pinned = sg.html && d.sigPos !== 'after';
   const sigB = bottom;
@@ -3393,14 +3404,16 @@ function skeletonRows(n, grid) {
   if (grid) return '<div class="rgrid">' + Array.from({ length: n }).map(() => '<div class="rcard"><div class="rthumb sk"></div><div class="rbody"><div class="sk sk-line" style="width:60%"></div><div class="sk sk-line"></div><div class="sk sk-line" style="width:40%"></div></div></div>').join('') + '</div>';
   return '<div class="ledger">' + Array.from({ length: n }).map(() => '<div class="lrow"><div class="sk" style="width:36px;height:50px"></div><div class="sk sk-line" style="width:70%"></div><div class="sk sk-line"></div><div class="sk sk-line" style="width:50%"></div><div class="sk sk-line" style="width:30%"></div><div></div><div></div></div>').join('') + '</div>';
 }
+/** Records load 20 at a time (with their thumbnails) so the page stays fast however many documents there are. */
+const PAGE_SIZE = 20;
 async function runSearch(offset) {
   const q = { text: $('#sText').value.trim(), office: $('#sOffice').value, type: $('#sType').value, status: $('#sStatus').value, tag: $('#sTag').value,
-    from: $('#sFrom').value, to: $('#sTo').value, offset: offset || 0, limit: 30 };
+    from: $('#sFrom').value, to: $('#sTo').value, offset: offset || 0, limit: PAGE_SIZE };
   const led = $('#ledger');
   led.innerHTML = skeletonRows(S.recView === 'grid' ? 8 : 6, S.recView === 'grid');
   try {
     const r = await userApi('searchDocuments', q);
-    S.records = { q: q, items: r.items, total: r.total, offset: q.offset, loaded: true };
+    S.records = { q: q, items: r.items, total: r.total, offset: q.offset, loaded: true, admin: !!S.adminToken };
     drawLedger();
   } catch (e) {
     led.innerHTML = '<div class="empty"><b>Could not load records</b>' + h(errMsg(e)) + (isNetErr(e) ? '<br>You appear to be offline.' : '') + '</div>';
@@ -3414,7 +3427,8 @@ function recActions(d, i) {
     (d.status === 'VOID' ? '<button class="btn ghost sm" data-a="print" data-i="' + i + '" title="Print with VOID stamp">' + icon('print') + '</button>' : '') +
     (!cert && d.status !== 'VOID' ? '<button class="btn ghost sm" data-a="dup" data-i="' + i + '" title="Duplicate as a new document">' + icon('copy') + '</button>' : '') +
     (!cert && d.status === 'FILED' && S.boot.allowRevisions ? '<button class="btn ghost sm" data-a="rev" data-i="' + i + '" title="Revise (same control number)">' + icon('edit') + '</button>' : '') +
-    (!cert && d.status === 'RESERVED' ? '<button class="btn sm" data-a="resume" data-i="' + i + '">' + icon('check') + (store.get('pending_' + d.code, null) ? 'Finish filing' : 'File') + '</button>' : '');
+    (!cert && d.status === 'RESERVED' ? '<button class="btn sm" data-a="resume" data-i="' + i + '">' + icon('check') + (store.get('pending_' + d.code, null) ? 'Finish filing' : 'File') + '</button>' : '') +
+    (S.adminToken ? '<button class="btn ghost sm danger-ghost" data-a="del" data-i="' + i + '" title="Delete (admin)" aria-label="Delete ' + h(d.code) + '">' + icon('trash') + '</button>' : '');
 }
 function thumbHtml(d) {
   return safeImg(d.thumb) ? '<img src="' + h(safeImg(d.thumb)) + '" alt="" loading="lazy" decoding="async">' : '<span class="nothumb">' + icon(d.docType === 'Certificate' ? 'award' : 'doc') + '</span>';
@@ -3453,8 +3467,8 @@ function drawLedger() {
   const end = Math.min(R.total, R.offset + R.items.length);
   $('#pager').innerHTML = '<span>' + (R.offset + 1) + '–' + end + ' of ' + R.total + '</span><span style="display:flex;gap:8px">' +
     (R.offset > 0 ? '<button class="btn sm" id="pPrev">Newer</button>' : '') + (end < R.total ? '<button class="btn sm" id="pNext">Older</button>' : '') + '</span>';
-  if ($('#pPrev')) $('#pPrev').onclick = () => runSearch(Math.max(0, R.offset - 30));
-  if ($('#pNext')) $('#pNext').onclick = () => runSearch(R.offset + 30);
+  if ($('#pPrev')) $('#pPrev').onclick = () => runSearch(Math.max(0, R.offset - PAGE_SIZE));
+  if ($('#pNext')) $('#pNext').onclick = () => runSearch(R.offset + PAGE_SIZE);
 }
 async function printRecord(full) {
   const wm = full.status === 'VOID' ? { reason: full.remarks } : null;
@@ -3471,6 +3485,7 @@ async function printRecord(full) {
 async function recordAction(a, d) {
   try {
     if (a === 'view') return openPdf(d.pdfUrl);
+    if (a === 'del') { if (await deleteRecord(d.code)) runSearch(S.records.offset || 0); return; }
     if (a === 'print') {
       const b = busy('Preparing ' + d.code, ['Loading document', 'Laying out pages']);
       try { b.step(0); const full = await userApi('getDocument', d.code); b.step(1); b.close(); await printRecord(full); } catch (e) { b.close(); throw e; }
@@ -4192,31 +4207,51 @@ function wireFiles(panel) {
       await adminApi('adminAttachPdf', r.code, await uploadPayloadAdmin(bytesToB64(bytes)), { pages: pages });
       b.close();
       toast(r.code + ' added' + (f.stamp.checked ? ' with its QR code' : ''));
-      f.reset(); pick(); S.records.loaded = false; listFiles(panel, $('#flQ', panel).value);
+      f.reset(); pick(); S.records.loaded = false; listFiles(panel, $('#flQ', panel).value, 0);
     } catch (er) { b.close(); toast(errMsg(er), true); if (code) listFiles(panel, $('#flQ', panel).value); }
   });
   $('#flForm', panel).addEventListener('submit', (e) => { e.preventDefault(); listFiles(panel, $('#flQ', panel).value); });
   $('#fList', panel).addEventListener('click', async (e) => {
+    const pg = e.target.closest('[data-pg]');
+    if (pg) { listFiles(panel, $('#flQ', panel).value, FL.offset + Number(pg.dataset.pg) * PAGE_SIZE); return; }
     const del = e.target.closest('[data-del]');
     if (!del) return;
-    const code = del.dataset.del;
-    if (!(await confirmBox('Delete ' + code + '?', 'The record is removed, its PDF goes to the Drive trash (you can recover it there for 30 days) and its QR code will no longer verify. The number is not reused.', 'Delete', true))) return;
-    try { await adminApi('adminDeleteDocument', code); toast(code + ' deleted'); S.records.loaded = false; listFiles(panel, $('#flQ', panel).value); } catch (er) { toast(errMsg(er), true); }
+    if (await deleteRecord(del.dataset.del)) listFiles(panel, $('#flQ', panel).value, FL.offset);
   });
   listFiles(panel, '');
 }
-async function listFiles(panel, text) {
+const FL = { offset: 0 };
+/** Admin: deletes a record, optionally freeing its number for the next document of the same office and period. */
+async function deleteRecord(code) {
+  const r = await openDialog({ title: 'Delete ' + code + '?',
+    body: '<p style="margin:0;color:var(--ink-2)">The record is removed and its PDF goes to the Drive trash, where you can recover it for 30 days. QR codes printed on it will no longer show its details.</p>' +
+      '<label class="switch"><input type="checkbox" name="recycle" checked> Reuse ' + h(code) + ' for the next document of this office</label>' +
+      '<p class="hint" style="margin:0">A number is reused only within its own period (the month or year written in it), and before any new number is given out.</p>',
+    actions: '<button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn stamp" value="ok">Delete</button>' });
+  if (!r) return false;
+  const recycle = !!r.data.recycle;
+  try {
+    await adminApi('adminDeleteDocument', code, recycle);
+    toast(code + ' deleted' + (recycle ? ' · number will be reused' : ''));
+    S.records.loaded = false;
+    return true;
+  } catch (er) { toast(errMsg(er), true); return false; }
+}
+async function listFiles(panel, text, offset) {
   const box = $('#fList', panel);
   if (!box) return;
+  FL.offset = Math.max(0, offset || 0);
   try {
-    const r = await adminApi('adminListDocuments', { text: String(text || '').trim(), limit: 60 });
+    let r = await adminApi('adminListDocuments', { text: String(text || '').trim(), limit: PAGE_SIZE, offset: FL.offset });
+    if (!r.items.length && FL.offset > 0) { FL.offset = Math.max(0, FL.offset - PAGE_SIZE); r = await adminApi('adminListDocuments', { text: String(text || '').trim(), limit: PAGE_SIZE, offset: FL.offset }); }
     box.innerHTML = r.items.length ? r.items.map((d) =>
       '<div class="frow"><span class="mono fc">' + h(d.code) + '</span><span class="fs"><b>' + h(d.recipient ? d.recipient + ' — ' + d.subject : d.subject) + '</b><small>' +
         h([d.officeCode, d.docType, fmtDate(d.createdAt), d.pages ? d.pages + ' p.' : ''].filter(Boolean).join(' · ')) + '</small></span>' +
         '<span class="chip ' + h(d.status) + '">' + h(d.status) + '</span><span class="fa">' +
         (d.pdfUrl ? '<a class="btn ghost sm" href="' + h(safeUrl(d.pdfUrl)) + '" target="_blank" rel="noopener" title="Open PDF">' + icon('ext') + '</a>' : '') +
         '<button class="btn ghost sm danger-ghost" data-del="' + h(d.code) + '" title="Delete" aria-label="Delete ' + h(d.code) + '">' + icon('trash') + '</button></span></div>').join('') +
-      (r.total > r.items.length ? '<p class="hint" style="margin:10px 14px">Showing ' + r.items.length + ' of ' + r.total + '. Search to narrow the list.</p>' : '')
+      (r.total > r.items.length ? '<div class="fpager"><span>' + (FL.offset + 1) + '–' + (FL.offset + r.items.length) + ' of ' + r.total + '</span><span>' +
+        (FL.offset > 0 ? '<button type="button" class="btn sm" data-pg="-1">Newer</button>' : '') + (FL.offset + r.items.length < r.total ? '<button type="button" class="btn sm" data-pg="1">Older</button>' : '') + '</span></div>' : '')
       : '<div class="empty"><b>No files found</b>' + (text ? 'Try another search.' : 'Files you create or add appear here.') + '</div>';
   } catch (e) { box.innerHTML = '<div class="empty"><b>Could not load files</b>' + h(errMsg(e)) + '</div>'; }
 }
@@ -4442,7 +4477,7 @@ const Mock = (function () {
   if (!db.secret) db.secret = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   const ftok = {}, btok = {};
   const tok = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  const vkey = (code) => { let x = 0; const t = db.secret + '|' + code; for (let i = 0; i < t.length; i++) x = (x * 33 + t.charCodeAt(i)) >>> 0; return x.toString(36) + (x ^ 0x5f3759df).toString(36); };
+  const vkey = (code) => { let x = 0; const g = (db.gen || {})[code]; const t = db.secret + '|' + code + (g ? '#' + g : ''); for (let i = 0; i < t.length; i++) x = (x * 33 + t.charCodeAt(i)) >>> 0; return x.toString(36) + (x ^ 0x5f3759df).toString(36); };
   db.offices.forEach((o, i) => { if (!o.color) o.color = COLORS[i % COLORS.length]; });
   const save = () => { try { localStorage.setItem('dt_' + KEY, JSON.stringify(db)); } catch (e) { /* quota: keep in memory */ } };
   const audit = (a, d) => { db.audit.push({ at: now().toISOString(), actor: 'admin', action: a, detail: d || '' }); db.audit = db.audit.slice(-200); };
@@ -4494,10 +4529,17 @@ const Mock = (function () {
       const o = office(meta.officeCode); if (!o) throw new Error('Choose an active office.');
       if (!meta.subject) throw new Error('Subject is required.');
       const n = numbering(o), k = pkey(o, n);
-      let seq = db.counters[k] != null ? db.counters[k] + 1 : Math.max(1, o.startSeq || 1);
-      let code = render(n.fmt, o.code, seq, n.pad);
-      while (doc(code)) { seq++; code = render(n.fmt, o.code, seq, n.pad); }
-      db.counters[k] = seq;
+      db.recycled = db.recycled || []; db.gen = db.gen || {};
+      const pool = db.recycled.filter((r) => r.key === k && r.office === o.code && !doc(r.code)).sort((a, b) => (a.code < b.code ? -1 : 1));
+      let code;
+      if (pool.length) {
+        code = pool[0].code; db.recycled = db.recycled.filter((r) => r.code !== code); db.gen[code] = (db.gen[code] || 0) + 1;
+      } else {
+        let seq = db.counters[k] != null ? db.counters[k] + 1 : Math.max(1, o.startSeq || 1);
+        code = render(n.fmt, o.code, seq, n.pad);
+        while (doc(code)) { seq++; code = render(n.fmt, o.code, seq, n.pad); }
+        db.counters[k] = seq;
+      }
       db.docs.push({ code: code, officeCode: o.code, officeName: o.name, docType: meta.docType, subject: meta.subject, preparedBy: meta.preparedBy || '', createdAt: now().toISOString(),
         status: 'RESERVED', pages: 0, scanCount: 0, lastScanAt: '', revision: 0, remarks: '', filedAt: '', tags: meta.tags || '', recipient: '', batchId: '', batchPage: 0 });
       save();
@@ -4586,13 +4628,19 @@ const Mock = (function () {
       return { code: code, fileId: 'local', url: mem.pdfs[code], revision: 0, filedAt: d.filedAt };
     },
     adminListDocuments(t, q) { reqAdmin(t); return search(q || {}); },
-    adminDeleteDocument(t, code) {
+    adminDeleteDocument(t, code, recycle) {
       reqAdmin(t);
       const i = db.docs.findIndex((x) => x.code === code); if (i < 0) throw new Error('Document not found.');
-      const d = db.docs[i]; db.docs.splice(i, 1);
+      const d = db.docs[i];
+      if (recycle) {
+        const o = office(d.officeCode); if (!o) throw new Error('The office ' + d.officeCode + ' no longer exists, so its number cannot be reused.');
+        const n = numbering(o), p = d.createdAt.slice(0, 7), y = p.slice(0, 4);
+        (db.recycled = db.recycled || []).push({ code: code, office: o.code, key: o.code + '|' + (n.reset === 'monthly' ? p : n.reset === 'yearly' ? y : 'ALL') });
+      }
+      db.docs.splice(i, 1);
       if (mem.pdfs[code]) { URL.revokeObjectURL(mem.pdfs[code]); delete mem.pdfs[code]; }
-      delete mem.thumbs[code]; delete db.sources[code]; audit('DELETE', code + ' — ' + d.subject); save();
-      return { code: code, deleted: true };
+      delete mem.thumbs[code]; delete db.sources[code]; audit(recycle ? 'DELETE_RECYCLE' : 'DELETE', code + ' — ' + d.subject); save();
+      return { code: code, deleted: true, recycled: !!recycle };
     },
     _search(q) {
       const t = (q.text || '').toLowerCase(), tag = (q.tag || '').toUpperCase();
@@ -4601,7 +4649,7 @@ const Mock = (function () {
         (!q.from || d.createdAt.slice(0, 10) >= q.from) && (!q.to || d.createdAt.slice(0, 10) <= q.to) &&
         (!t || (d.code + ' ' + d.subject + ' ' + d.preparedBy + ' ' + d.officeName + ' ' + d.docType + ' ' + d.recipient + ' ' + d.tags).toLowerCase().indexOf(t) >= 0));
       l = l.slice().sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : (a.code < b.code ? 1 : -1)));
-      return { total: l.length, items: l.slice(q.offset || 0, (q.offset || 0) + (q.limit || 50)).map(docOut) };
+      return { total: l.length, items: l.slice(q.offset || 0, (q.offset || 0) + Math.min(50, q.limit || 20)).map(docOut) };
     },
     getReport(year, c) {
       reqUser(c);
@@ -4733,7 +4781,7 @@ function go(view) {
   S.view = view;
   $$('.tab').forEach((t) => t.setAttribute('aria-current', t.dataset.view === view ? 'page' : 'false'));
   $$('[data-v]').forEach((v) => { v.hidden = v.dataset.v !== view; });
-  if (view === 'records' && !S.records.loaded && !$('#recDocs').hidden) runSearch(0);
+  if (view === 'records' && !$('#recDocs').hidden && (!S.records.loaded || S.records.admin !== !!S.adminToken)) runSearch(S.records.loaded ? S.records.offset || 0 : 0);
   if (view === 'admin') renderAdmin();
   if (view === 'certs' && !$('[data-v="certs"]').innerHTML) renderCerts();
   if (view === 'create') requestAnimationFrame(() => { fitEditor(); schedulePageCount(); });
