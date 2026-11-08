@@ -60,12 +60,14 @@ Replace the placeholder with your `/exec` URL and keep the quotes. This is the o
   - Paste or upload a list of recipients. Every name gets its own QR code, all in one PDF.
   - Signatories and their placement can be changed.
 - **Records**
-  - Search, filter by Perpetual Index subject, reprint, and export reports to Excel.
+  - Shows 20 records per page to stay fast. Search, filter by Perpetual Index subject, reprint, and export reports to Excel.
 - **Verify**
   - Scan a QR code with the camera, or type a control number, to confirm a document is genuine.
 - **Admin**
-  - App name, logo, colors, fonts, footer, privacy notice.
-  - Offices and their code formats, document types, certificate logos and footers.
+  - App name, logo, colors, fonts (including Bookman Old Style), footer, privacy notice.
+  - Offices: add, edit, disable or delete. Each has its own code format.
+  - Files: add a PDF made outside the app (it gets a control number, and the QR code is stamped on every page), or delete any record. A deleted record's number can be reused for the office's next document in the same month or year.
+  - Document types, certificate logos (12 placements including beside the QR code; each logo can have its own) and footers.
   - Access codes and the security checklist.
 
 ## Installing on devices
