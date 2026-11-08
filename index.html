@@ -657,6 +657,9 @@ dialog.wide { max-width: min(980px, calc(100vw - 16px)); }
 .sheet.cert.cert-portrait .cert-logos.left { left: 52pt; }
 .sheet.cert.cert-portrait .cert-logos.right { right: 52pt; }
 .sheet.cert .cert-logos.row { left: 0; right: 0; justify-content: center; }
+.sheet.cert .cert-logos.corner { gap: 6pt; }
+.sheet.cert .cert-logos.col { flex-direction: column; top: 50%; transform: translateY(-50%); gap: 10pt; }
+.sheet.cert .cert-logos.wmark { inset: 0; justify-content: center; z-index: 0; opacity: .09; pointer-events: none; gap: 24pt; }
 .sheet.cert .cert-logos.row .lg { width: 46pt; height: 46pt; }
 .sheet.cert .cert-foottext { position: absolute; left: 110pt; right: 110pt; bottom: 34pt; text-align: center; font: 400 8.5pt/11pt var(--ftr-font, 'Carlito', sans-serif); color: #222; }
 .sheet.cert .cert-foot { position: absolute; left: 0; right: 0; bottom: 24pt; height: 84pt; }
@@ -707,6 +710,32 @@ dialog.wide { max-width: min(980px, calc(100vw - 16px)); }
 .preview-pages > div { content-visibility: auto; contain-intrinsic-size: 600px 840px; }
 #stage .sheet { contain: layout style; }
 @media (max-width: 860px) { .setup-banner { padding: 8px 16px; } }
+
+/* Admin → Files */
+.fu { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--rule); border-radius: var(--r); background: var(--surface-2); }
+.drop { position: relative; display: grid; justify-items: center; gap: 4px; padding: 22px 14px; border: 1.5px dashed var(--rule-2); border-radius: var(--r); background: var(--surface); color: var(--ink-2); text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
+.drop svg { width: 26px; height: 26px; color: var(--navy); }
+.drop small { color: var(--ink-3); }
+.drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.drop.over, .drop:focus-within { border-color: var(--navy); background: var(--manila-soft); }
+.drop.has { border-style: solid; border-color: var(--navy); color: var(--ink); font-weight: 600; }
+.fl-search { display: flex; gap: 8px; margin-bottom: 10px; }
+.fl-search .input { flex: 1; min-width: 0; }
+.flist { border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; background: var(--surface); }
+.frow { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--rule); }
+.frow:last-of-type { border-bottom: 0; }
+.frow .fc { font-weight: 600; font-size: 12.5px; color: var(--stamp); }
+.frow .fs { display: grid; min-width: 0; }
+.frow .fs b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frow .fs small { color: var(--ink-3); }
+.frow .fa { display: flex; gap: 4px; }
+.btn.danger-ghost:hover, .btn.danger-ghost:focus-visible { color: var(--stamp); background: var(--stamp-soft); }
+.logo-slot { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--rule); border-radius: var(--r); }
+@media (max-width: 640px) {
+  .frow { grid-template-columns: minmax(0, 1fr) auto; }
+  .frow .fc { grid-column: 1 / -1; }
+  .frow .chip { justify-self: start; }
+}
 
 </style>
 <style id="page-style">@page { size: A4; margin: 0; }</style>
@@ -888,13 +917,26 @@ const FONTS = {
   Tinos: { label: 'Times New Roman', css: "'Tinos', 'Times New Roman', Times, serif" },
   Carlito: { label: 'Calibri', css: "'Carlito', Calibri, sans-serif" },
   Caladea: { label: 'Cambria', css: "'Caladea', Cambria, Georgia, serif" },
-  Gelasio: { label: 'Georgia', css: "'Gelasio', Georgia, serif" }
+  Gelasio: { label: 'Georgia', css: "'Gelasio', Georgia, serif" },
+  // URW Bookman: the free twin of Bookman Old Style (same letter widths), loaded so text breaks the same on every device
+  'Bookman Old Style': { label: 'Bookman Old Style', css: "'URW Bookman', 'Bookman Old Style', Bookman, 'TeX Gyre Bonum', serif" }
+};
+/* Fonts that are not on Google Fonts, served from a pinned CDN package */
+const CDN_FONTS = {
+  'Bookman Old Style': {
+    family: 'URW Bookman',
+    base: 'https://cdn.jsdelivr.net/npm/urw-core35-fonts@1.1.0/fonts/',
+    faces: [['URWBookman-Light', 400, 'normal'], ['URWBookman-LightItalic', 400, 'italic'], ['URWBookman-Demi', 700, 'normal'], ['URWBookman-DemiItalic', 700, 'italic']]
+  }
 };
 const BUNDLED = new Set(['Arimo', 'Tinos', 'Carlito', 'Caladea', 'Cinzel', 'UnifrakturMaguntia', 'IBM Plex Mono', 'Public Sans', 'Archivo']);
 const FONT_ALIAS = [[/^(arial|helvetica|arimo)/i, 'Arimo'], [/^(times|tinos)/i, 'Tinos'], [/^(calibri|carlito)/i, 'Carlito'], [/^(cambria|caladea)/i, 'Caladea'],
-  [/^(georgia|gelasio)/i, 'Gelasio'], [/garamond/i, 'EB Garamond'], [/old english|unifraktur/i, 'UnifrakturMaguntia'], [/trajan|cinzel/i, 'Cinzel']];
-const SERIFISH = /serif|baskerville|lora|merriweather|garamond|caslon|tinos|caladea|gelasio|playfair|crimson|bodoni|cormorant|spectral|domine|cinzel|unifraktur|fraktur|bitter|slab|libre|cardo|prata|alegreya|vollkorn/i;
-function fontName(n) { return String(n || '').replace(/&quot;|["']/g, '').split(',')[0].trim(); }
+  [/^(georgia|gelasio)/i, 'Gelasio'], [/bookman|bonum/i, 'Bookman Old Style'], [/garamond/i, 'EB Garamond'], [/old english|unifraktur/i, 'UnifrakturMaguntia'], [/trajan|cinzel/i, 'Cinzel']];
+const SERIFISH = /serif|bookman|baskerville|lora|merriweather|garamond|caslon|tinos|caladea|gelasio|playfair|crimson|bodoni|cormorant|spectral|domine|cinzel|unifraktur|fraktur|bitter|slab|libre|cardo|prata|alegreya|vollkorn/i;
+function fontName(n) {
+  const x = String(n || '').replace(/&quot;|["']/g, '').split(',')[0].trim();
+  return /^(urw bookman|bookman( old style)?)$/i.test(x) ? 'Bookman Old Style' : x;
+}
 function fontCss(n) {
   n = fontName(n) || 'Arimo';
   if (FONTS[n]) return FONTS[n].css;
@@ -904,7 +946,10 @@ function fontCss(n) {
 function fontLabel(n) { return FONTS[n] ? FONTS[n].label + ' (' + n + ')' : n; }
 function fontList(raw) {
   raw = raw != null ? raw : ((S.boot && S.boot.page && S.boot.page.fontList) || DEFAULT_SETTINGS.fontList);
-  return Array.from(new Set(String(raw).split(/[\n,]+/).map(fontName).filter(Boolean)));
+  const list = Array.from(new Set(String(raw).split(/[\n,]+/).map(fontName).filter(Boolean)));
+  // always offered, also on installs whose font list was saved before it was added
+  if (list.indexOf('Bookman Old Style') < 0) list.splice(Math.min(list.length, 5), 0, 'Bookman Old Style');
+  return list;
 }
 const fontLoads = {};
 /** Loads any Google Fonts family on demand. Resolves true when it is ready, false if Google Fonts has no such family. */
@@ -912,6 +957,19 @@ function loadFont(n) {
   n = fontName(n);
   if (!n || BUNDLED.has(n)) return Promise.resolve(true);
   if (fontLoads[n]) return fontLoads[n];
+  if (CDN_FONTS[n]) {
+    const f = CDN_FONTS[n];
+    const st = document.createElement('style');
+    st.setAttribute('data-font', n);
+    st.textContent = f.faces.map((x) => "@font-face{font-family:'" + f.family + "';src:url(" + f.base + x[0] + ".woff2) format('woff2');font-weight:" + x[1] +
+      ';font-style:' + x[2] + ';font-display:swap}').join('');
+    document.head.appendChild(st);
+    const ps = document.fonts && document.fonts.load
+      ? Promise.all(['', 'bold ', 'italic ', 'bold italic '].map((w) => document.fonts.load(w + '12pt "' + f.family + '"').catch(() => [])))
+      : Promise.resolve([[1]]);
+    fontLoads[n] = Promise.race([ps.then((r) => r.some((a) => a && a.length)), sleep(6000).then(() => false)]).then((ok) => { if (!ok) delete fontLoads[n]; return ok; });
+    return fontLoads[n];
+  }
   const fam = encodeURIComponent(n).replace(/%20/g, '+');
   const urls = ['https://fonts.googleapis.com/css2?family=' + fam + ':ital,wght@0,400;0,700;1,400;1,700&display=swap',
     'https://fonts.googleapis.com/css2?family=' + fam + ':wght@400;700&display=swap',
@@ -949,12 +1007,13 @@ const DEFAULT_SETTINGS = {
     'You may request access to, correction of, or deletion of your personal data through the Division\'s Data Protection Officer at agusan.norte@deped.gov.ph.',
   codeFormat: '{OFFICE}-{YYYY}-{MM}-{SEQ}', seqPadding: '3', seqReset: 'monthly',
   paperSize: 'A4', bodyFont: 'Arimo', bodySize: '12', lineHeight: '1.15', marginSide: '25.4',
-  fontList: 'Arimo\nTinos\nCarlito\nCaladea\nGelasio\nEB Garamond\nLibre Baskerville\nLora\nMerriweather\nRoboto\nOpen Sans\nLato\nMontserrat\nSource Sans 3\nCinzel\nGreat Vibes\nPinyon Script\nPlayfair Display',
+  fontList: 'Arimo\nTinos\nCarlito\nCaladea\nGelasio\nBookman Old Style\nEB Garamond\nLibre Baskerville\nLora\nMerriweather\nRoboto\nOpen Sans\nLato\nMontserrat\nSource Sans 3\nCinzel\nGreat Vibes\nPinyon Script\nPlayfair Display',
   hdrFontA: 'UnifrakturMaguntia', hdrFontB: 'Cinzel', ftrFont: 'Carlito',
   verifyBaseUrl: '', pdfSharing: 'link', allowRevisions: 'true', allowEmbed: 'false',
   colorPrimary: '#1c3768', colorAccent: '#e2b44f',
   certFooterStyle: 'none', certFooterText: 'Schools Division of Agusan del Norte · J.P. Rosales Avenue, Butuan City\nagusan.norte@deped.gov.ph · depedagnor.com',
   certLogoPlace: 'header', certLogo1Url: '', certLogo2Url: '', certLogo3Url: '', certLogo4Url: '',
+  certLogoSize: 'M', certLogo1Place: '', certLogo2Place: '', certLogo3Place: '', certLogo4Place: '',
   indexSubjects: 'ACTIVITIES\nAWARDS\nBUREAUS AND OFFICES\nCELEBRATIONS\nCOMPETITIONS\nCONFERENCES\nCONTESTS\nCURRICULUM\nEMPLOYEES\nFUNDS\nLEARNERS\nLEARNING RESOURCES\nMEETINGS\nOFFICIALS\nPERSONNEL\nPOLICY\nPROGRAMS\nPROJECTS\nREPORTS\nRESEARCH\nRULES AND REGULATIONS\nSCHOOLS\nSEMINARS\nSTANDARDS\nTEACHERS\nTRAINING PROGRAMS',
   hdrStyle: 'artwork',
   hdrLine1: 'Republic of the Philippines', hdrLine2: 'Department of Education',
@@ -2584,33 +2643,69 @@ function sigBlock(d, merge) {
 /** Division-wide certificate logos and footer, set by the admin. `over` lets the admin preview unsaved values. */
 function certBrand(over) {
   const c = (over || (S.boot && S.boot.cert)) || {};
-  return { logos: (c.logos || []).filter(Boolean), place: c.place || 'header', footerStyle: c.footerStyle || 'none', footerText: c.footerText || '' };
+  const places = c.places || [];
+  const items = (c.logos || []).map((u, i) => ({ u: u, place: places[i] || '' })).filter((x) => x.u);
+  return { logos: items.map((x) => x.u), items: items, place: c.place || 'header', size: c.size || 'M', footerStyle: c.footerStyle || 'none', footerText: c.footerText || '' };
 }
+const LOGO_PLACES = [
+  ['header', 'Beside the header (left and right of the seal)'], ['top', 'In a row under the header'],
+  ['corners', 'Top corners (left and right)'], ['topleft', 'Top-left corner'], ['topright', 'Top-right corner'],
+  ['sides', 'Down the left and right sides'], ['left', 'Down the left side'], ['right', 'Down the right side'],
+  ['bottom', 'In a row above the footer'], ['bottomleft', 'Bottom-left corner'], ['watermark', 'Large and faded behind the text']
+];
+const LOGO_SIZES = { S: 40, M: 58, L: 72, XL: 90 };
 function buildCertSheet(o) {
   const d = Object.assign(certDefaults(), o.design || {});
   const dim = paperDims(d.orientation);
   const lh = letterhead();
-  const br = d.brand === 'none' ? { logos: [], place: 'header', footerStyle: 'none', footerText: '' } : certBrand(o.brand);
+  const br = d.brand === 'none' ? { logos: [], items: [], place: 'header', size: 'M', footerStyle: 'none', footerText: '' } : certBrand(o.brand);
   const portrait = d.orientation === 'portrait';
   const headH = d.header === 'letterhead' ? 126 : d.header === 'seal' ? 64 : 0;
   let top = 40 + headH + (headH ? 8 : 20);
   let bottom = 92;
-  // logos
-  let logos = '';
-  const L = br.logos;
-  const lg = (u) => '<div class="lg" style="background-image:url(' + safeImg(u) + ')"></div>';
-  if (L.length) {
-    if (br.place === 'header' && d.header !== 'none') {
-      const per = portrait ? 1 : 2;
+  // logos: each one goes to its own place, or to the place set for all logos
+  const sz = LOGO_SIZES[br.size] || 58;
+  const edge = d.border === 'ribbon' ? 66 : 46;
+  const groups = {};
+  (br.items || []).forEach((it) => {
+    let pl = it.place || br.place;
+    if (LOGO_PLACES.every((x) => x[0] !== pl)) pl = 'header';
+    if (pl === 'header' && d.header === 'none') pl = 'corners';
+    (groups[pl] = groups[pl] || []).push(it.u);
+  });
+  const lg = (u, px) => '<div class="lg" style="width:' + (px || sz) + 'pt;height:' + (px || sz) + 'pt;background-image:url(' + safeImg(u) + ')"></div>';
+  const box = (cls, style, list, px) => '<div class="cert-logos ' + cls + '" style="' + style + '">' + list.map((u) => lg(u, px)).join('') + '</div>';
+  const halves = (list) => { const n = Math.ceil(list.length / 2); return [list.slice(0, n), list.slice(n)]; };
+  let logos = '', padL = 0, padR = 0, bottomRow = [];
+  Object.keys(groups).forEach((pl) => {
+    const L = groups[pl];
+    const cornerTop = d.header === 'none' ? 44 : 40;
+    if (pl === 'header') {
+      const per = portrait && sz > 40 ? 1 : 2;
       const left = L.slice(0, Math.min(per, Math.ceil(L.length / 2))), right = L.slice(left.length, left.length + per);
-      logos = '<div class="cert-logos side left">' + left.map(lg).join('') + '</div>' + (right.length ? '<div class="cert-logos side right">' + right.map(lg).join('') + '</div>' : '');
-    } else if (br.place === 'bottom') {
-      logos = '<div class="cert-logos row bottom" style="bottom:var(--logo-b)">' + L.map(lg).join('') + '</div>';
-    } else {
-      logos = '<div class="cert-logos row top" style="top:' + (headH ? 40 + headH + 4 : 40) + 'pt">' + L.map(lg).join('') + '</div>';
-      top += 62;
+      const y = Math.max(40, 36 + (headH - sz) / 2 - (headH > 100 ? 18 : 0));
+      logos += box('side left', 'top:' + y + 'pt', left) + (right.length ? box('side right', 'top:' + y + 'pt', right) : '');
+    } else if (pl === 'top') {
+      logos += box('row', 'top:' + (headH ? 40 + headH + 4 : 40) + 'pt', L);
+      top += sz + 4;
+    } else if (pl === 'corners') {
+      const hv = halves(L);
+      logos += box('corner', 'top:' + cornerTop + 'pt;left:' + edge + 'pt', hv[0]) + (hv[1].length ? box('corner', 'top:' + cornerTop + 'pt;right:' + edge + 'pt', hv[1]) : '');
+      if (!headH) top = Math.max(top, cornerTop + sz + 8);
+    } else if (pl === 'topleft' || pl === 'topright') {
+      logos += box('corner', 'top:' + cornerTop + 'pt;' + (pl === 'topleft' ? 'left' : 'right') + ':' + edge + 'pt', L);
+      if (!headH) top = Math.max(top, cornerTop + sz + 8);
+    } else if (pl === 'sides' || pl === 'left' || pl === 'right') {
+      const hv = pl === 'sides' ? halves(L) : pl === 'left' ? [L, []] : [[], L];
+      if (hv[0].length) { logos += box('col', 'left:' + edge + 'pt', hv[0]); padL = edge + sz + 10; }
+      if (hv[1].length) { logos += box('col', 'right:' + (d.border === 'ribbon' ? 46 : edge) + 'pt', hv[1]); padR = 46 + sz + 10; }
+    } else if (pl === 'bottom' || pl === 'bottomleft') {
+      bottomRow.push([pl, L]);
+    } else if (pl === 'watermark') {
+      const px = Math.round(Math.min(dim.w, dim.h) * 0.5 / Math.max(1, L.length * 0.8));
+      logos += box('wmark', '', L, px);
     }
-  }
+  });
   // footer
   let foot = '', qrInFoot = false;
   const lines = String(br.footerText || '').split('\n').filter((x) => x.trim()).slice(0, 4);
@@ -2626,7 +2721,10 @@ function buildCertSheet(o) {
     bottom = Math.max(bottom, 34 + lines.length * 11 + 14);
   }
   const logoB = bottom;
-  if (L.length && br.place === 'bottom') bottom += 50;
+  bottomRow.forEach((g) => {
+    logos += box(g[0] === 'bottom' ? 'row' : 'corner', 'bottom:' + logoB + 'pt' + (g[0] === 'bottomleft' ? ';left:' + edge + 'pt' : ''), g[1]);
+  });
+  if (bottomRow.length) bottom += sz - 8;
   const sg = sigBlock(d, o.merge);
   const pinned = sg.html && d.sigPos !== 'after';
   const sigB = bottom;
@@ -2654,6 +2752,9 @@ function buildCertSheet(o) {
     (pinned ? sg.html.replace('class="cert-sigs', 'class="cert-sigs pinned') : '') + foot + qr + watermarkHtml(o.watermark);
   const body = $('.cert-body', el);
   body.innerHTML = o.html || '';
+  const baseL = d.border === 'ribbon' ? 84 : portrait ? 54 : 66, baseR = portrait ? 54 : 66;
+  if (padL > baseL) body.style.left = padL + 'pt';
+  if (padR > baseR) body.style.right = padR + 'pt';
   if (sg.html && !pinned) body.insertAdjacentHTML('beforeend', sg.html);
   return el;
 }
@@ -3644,7 +3745,7 @@ async function renderVerifyPage(code, key) {
    ADMIN view
    ===================================================================== */
 const ADMIN_TABS = [
-  ['general', 'App & branding', 'gear'], ['numbering', 'Control numbers', 'qr'], ['offices', 'Offices', 'folder'],
+  ['general', 'App & branding', 'gear'], ['numbering', 'Control numbers', 'qr'], ['offices', 'Offices', 'folder'], ['files', 'Files', 'doc'],
   ['letterhead', 'Letterhead & page', 'doc'], ['certs', 'Certificates', 'award'], ['types', 'Types & Perpetual Index', 'ul'], ['access', 'Access & sharing', 'lock'], ['activity', 'Activity', 'grid']
 ];
 function renderAdmin() {
@@ -3832,7 +3933,22 @@ function drawAdminPanel() {
         '<div class="orow' + (o.active ? '' : ' off') + '"><span class="oc" style="color:' + h(o.color || 'inherit') + '"><span class="dot" style="background:' + h(o.color || '#999') + '"></span>' + h(o.code) + '</span><span><span class="on">' + h(o.name) + '</span><br><span class="os">' +
         h(o.codeFormat ? 'Format ' + o.codeFormat : 'Default format') + (o.headerLine ? ' · letterhead line' : '') + (o.active ? '' : ' · disabled') + '</span></span>' +
         '<span class="nx">' + h(o.nextCode) + '</span><span style="display:flex;gap:4px"><button class="btn ghost sm" data-oe="' + i + '" title="Edit">' + icon('edit') + '</button>' +
-        '<button class="btn ghost sm" data-ot="' + i + '" title="' + (o.active ? 'Disable' : 'Enable') + '">' + icon(o.active ? 'void' : 'restore') + '</button></span></div>').join('') + '</div></div>';
+        '<button class="btn ghost sm" data-ot="' + i + '" title="' + (o.active ? 'Disable' : 'Enable') + '">' + icon(o.active ? 'void' : 'restore') + '</button>' +
+        '<button class="btn ghost sm danger-ghost" data-od="' + i + '" title="Delete office" aria-label="Delete ' + h(o.code) + '">' + icon('trash') + '</button></span></div>').join('') + '</div></div>';
+  } else if (tab === 'files') {
+    const offs = S.boot.offices.filter((o) => o.active !== false), types = S.boot.types || [];
+    html = '<div class="panel" data-p="files"><h2>Files</h2><p class="lead">Add a PDF made outside the app, such as a signed scan, so it gets a control number and QR code. You can also delete any record.</p>' +
+      '<form id="fuForm" class="fu" autocomplete="off"><h3 style="border:0;padding:0;margin:0">Add a file</h3>' +
+      '<label class="drop" id="fuDrop">' + icon('doc') + '<span id="fuName">Choose a PDF or drop it here</span><small>Up to 25 MB</small><input type="file" name="pdf" accept="application/pdf,.pdf" required></label>' +
+      '<div class="grid2"><label class="field"><span>Office</span><select class="select" name="office" required>' + offs.map((o) => '<option value="' + h(o.code) + '">' + h(o.code + ' · ' + o.name) + '</option>').join('') + '</select></label>' +
+      '<label class="field"><span>Document type</span><select class="select" name="type" required>' + types.map((t) => '<option>' + h(t) + '</option>').join('') + '</select></label></div>' +
+      '<label class="field"><span>Subject</span><input class="input" name="subject" maxlength="300" required></label>' +
+      '<div class="grid2"><label class="field"><span>Prepared by</span><input class="input" name="by" maxlength="120"></label>' +
+      '<label class="field"><span>Perpetual Index subjects</span><input class="input" name="tags" list="fuTags" maxlength="500" placeholder="Separate with commas"><datalist id="fuTags">' + (S.boot.indexSubjects || []).map((t) => '<option value="' + h(t) + '">').join('') + '</datalist></label></div>' +
+      '<label class="switch"><input type="checkbox" name="stamp" checked> Stamp the QR code and control number at the lower right of every page</label>' +
+      '<div><button class="btn primary">' + icon('plus') + 'Add file</button></div></form>' +
+      '<h3>All files</h3><form id="flForm" class="fl-search"><input class="input" id="flQ" type="search" placeholder="Search control number, subject, office, name…"><button class="btn">' + icon('search') + 'Search</button></form>' +
+      '<div id="fList" class="flist"><div class="skel" style="height:120px"></div></div></div>';
   } else if (tab === 'letterhead') {
     html = '<div class="panel" data-p="letterhead"><h2>Letterhead &amp; page</h2><p class="lead">Matches the Division template by default. Leave image links blank to keep the original logos.</p>' +
       '<div class="split"><div style="display:grid;gap:14px">' +
@@ -3859,10 +3975,11 @@ function drawAdminPanel() {
     html = '<div class="panel" data-p="certs"><h2>Certificate logos &amp; footer</h2><p class="lead">Added to every certificate made in the app. Staff can hide them on a single design.</p>' +
       '<div class="split"><div style="display:grid;gap:14px">' +
       '<h3 style="border:0;padding:0;margin:0">Logos</h3>' +
-      fieldLogo('certLogo1Url', 'Logo 1', cl[0] || '') + fieldLogo('certLogo2Url', 'Logo 2', cl[1] || '') +
-      fieldLogo('certLogo3Url', 'Logo 3', cl[2] || '') + fieldLogo('certLogo4Url', 'Logo 4', cl[3] || '') +
-      fieldSel('certLogoPlace', 'Where the logos go', [['header', 'Beside the header (left and right of the seal)'], ['top', 'In a row under the header'], ['bottom', 'In a row above the footer']]) +
-      '<p class="hint" style="margin:0">Use transparent PNGs for the cleanest look. Portrait certificates beside the header show the first two logos.</p>' +
+      '<div class="grid2">' + fieldSel('certLogoPlace', 'Where the logos go', LOGO_PLACES) +
+      fieldSel('certLogoSize', 'Logo size', [['S', 'Small'], ['M', 'Medium'], ['L', 'Large'], ['XL', 'Extra large']]) + '</div>' +
+      [1, 2, 3, 4].map((n) => '<div class="logo-slot">' + fieldLogo('certLogo' + n + 'Url', 'Logo ' + n, cl[n - 1] || '') +
+        fieldSel('certLogo' + n + 'Place', 'Logo ' + n + ' placement', [['', 'Same as above']].concat(LOGO_PLACES)) + '</div>').join('') +
+      '<p class="hint" style="margin:0">Give a logo its own placement to mix positions, for example the seal in the top-left corner and partner logos in a row above the footer. Use transparent PNGs for the cleanest look.</p>' +
       '<h3>Footer</h3>' +
       fieldSel('certFooterStyle', 'Footer', [['none', 'No footer'], ['text', 'Text lines (below)'], ['letterhead', 'Same footer as documents (DepEd logos and address)']]) +
       fieldTa('certFooterText', 'Footer text', 3, 'Up to four lines, centered at the bottom of the certificate. The QR code stays at the lower right.') +
@@ -3907,6 +4024,7 @@ function drawAdminPanel() {
   wireLogoTests(panel);
   if (tab === 'numbering') wireNumbering(panel);
   if (tab === 'offices') wireOffices(panel);
+  if (tab === 'files') wireFiles(panel);
   if (tab === 'letterhead') wireLetterhead(panel);
   if (tab === 'certs') wireCertBrand(panel);
   if (tab === 'types') wireTypes(panel);
@@ -3983,12 +4101,125 @@ function wireOffices(panel) {
   };
   $('#oAdd', panel).onclick = () => edit(null);
   $$('[data-oe]', panel).forEach((b) => b.addEventListener('click', () => edit(S.admin.state.offices[+b.dataset.oe])));
+  $$('[data-od]', panel).forEach((b) => b.addEventListener('click', async () => {
+    const o = S.admin.state.offices[+b.dataset.od];
+    if (!(await confirmBox('Delete ' + o.code + '?', o.name + ' will be removed from the office list. Documents already filed under ' + o.code + ' stay in Records and still verify. To pause an office instead, use Disable.', 'Delete office', true))) return;
+    try { S.admin.state = await adminApi('adminDeleteOffice', o.id); await reloadBoot(); toast(o.code + ' deleted'); drawAdminPanel(); } catch (e) { toast(errMsg(e), true); }
+  }));
   $$('[data-ot]', panel).forEach((b) => b.addEventListener('click', async () => {
     const o = S.admin.state.offices[+b.dataset.ot];
     try { S.admin.state = await adminApi('adminSetOfficeActive', o.id, !o.active); await reloadBoot(); toast(o.code + (o.active ? ' disabled' : ' enabled')); drawAdminPanel(); } catch (e) { toast(errMsg(e), true); }
   }));
 }
 const previewFonts = {};
+
+/* ---------------- Files: add a PDF made elsewhere, delete records ---------------- */
+const PDFLIB = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+function bytesToB64(u8) {
+  let out = '';
+  for (let i = 0; i < u8.length; i += 0x8000) out += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(out);
+}
+/** Puts the QR code and control number at the lower right of every page, like the app's own footer. */
+async function stampPdf(bytes, code, verifyUrl) {
+  if (!window.PDFLib) await loadScript(PDFLIB);
+  const L = window.PDFLib;
+  const doc = await L.PDFDocument.load(bytes, { ignoreEncryption: false });
+  const png = await doc.embedPng(qrDataUrl(verifyUrl));
+  const font = await doc.embedFont(L.StandardFonts.CourierBold);
+  doc.getPages().forEach((pg) => {
+    const box = pg.getCropBox ? pg.getCropBox() : { x: 0, y: 0, width: pg.getWidth(), height: pg.getHeight() };
+    const rot = ((pg.getRotation().angle % 360) + 360) % 360;
+    const W = rot === 90 || rot === 270 ? box.height : box.width;
+    const q = 52, fs = 6.6, mr = 36, mb = 26;
+    const tw = font.widthOfTextAtSize(code, fs);
+    // position on the page as seen, then map into the page's own (possibly rotated) coordinates
+    const place = (x, y) => {
+      if (rot === 90) return { x: box.x + box.width - y, y: box.y + x, rotate: 90 };
+      if (rot === 180) return { x: box.x + box.width - x, y: box.y + box.height - y, rotate: 180 };
+      if (rot === 270) return { x: box.x + y, y: box.y + box.height - x, rotate: 270 };
+      return { x: box.x + x, y: box.y + y, rotate: 0 };
+    };
+    const qx = W - mr - q, qy = mb + 10;
+    const bg = place(Math.min(qx, W - mr - tw) - 3, mb - 3);
+    pg.drawRectangle({ x: bg.x, y: bg.y, width: Math.max(q, tw) + 6, height: q + 16, color: L.rgb(1, 1, 1), rotate: L.degrees(bg.rotate) });
+    const qp = place(qx, qy);
+    pg.drawImage(png, { x: qp.x, y: qp.y, width: q, height: q, rotate: L.degrees(qp.rotate) });
+    const tp = place(W - mr - tw, mb + 1);
+    pg.drawText(code, { x: tp.x, y: tp.y, size: fs, font: font, color: L.rgb(0, 0, 0), rotate: L.degrees(tp.rotate) });
+  });
+  return { bytes: await doc.save(), pages: doc.getPageCount() };
+}
+async function pdfPages(bytes) {
+  try {
+    if (!window.PDFLib) await loadScript(PDFLIB);
+    return (await window.PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true })).getPageCount();
+  } catch (e) { return 1; }
+}
+function wireFiles(panel) {
+  const f = $('#fuForm', panel), drop = $('#fuDrop', panel), inp = f.pdf;
+  const pick = () => { const x = inp.files[0]; $('#fuName', panel).textContent = x ? x.name + ' · ' + (x.size / 1048576).toFixed(1) + ' MB' : 'Choose a PDF or drop it here'; drop.classList.toggle('has', !!x); };
+  inp.addEventListener('change', pick);
+  ['dragover', 'dragenter'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, () => drop.classList.remove('over')));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files.length) { inp.files = e.dataTransfer.files; pick(); } });
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const file = inp.files[0];
+    if (!file) return toast('Choose a PDF first.', true);
+    if (file.size > 25 * 1048576) return toast('The PDF is larger than 25 MB.', true);
+    let bytes = new Uint8Array(await file.arrayBuffer());
+    if (String.fromCharCode.apply(null, bytes.subarray(0, 5)) !== '%PDF-') return toast('That file is not a PDF.', true);
+    const b = busy('Adding ' + file.name, ['Assigning a control number', 'Stamping the QR code', 'Saving to Drive']);
+    let code = '';
+    try {
+      b.step(0);
+      const r = await adminApi('adminAddDocument', { officeCode: f.office.value, docType: f.type.value, subject: f.subject.value.trim(), preparedBy: f.by.value.trim(),
+        tags: f.tags.value.split(',').map((x) => x.trim().toUpperCase()).filter(Boolean).join(', ') });
+      code = r.code;
+      b.step(1);
+      let pages = 0;
+      if (f.stamp.checked) {
+        try { const st = await stampPdf(bytes, r.code, r.verifyUrl); bytes = st.bytes; pages = st.pages; } catch (er) {
+          b.close();
+          const go = await confirmBox('The QR code could not be stamped', 'This PDF is protected or damaged, so it cannot be changed. Save it without the stamp? ' + r.code + ' will still be recorded.', 'Save without stamp');
+          if (!go) throw new Error(r.code + ' was reserved but has no file yet. Delete it below, or try again with another copy of the PDF.');
+          b.step(2);
+        }
+      }
+      if (!pages) pages = await pdfPages(bytes);
+      b.step(2);
+      await adminApi('adminAttachPdf', r.code, await uploadPayloadAdmin(bytesToB64(bytes)), { pages: pages });
+      b.close();
+      toast(r.code + ' added' + (f.stamp.checked ? ' with its QR code' : ''));
+      f.reset(); pick(); S.records.loaded = false; listFiles(panel, $('#flQ', panel).value);
+    } catch (er) { b.close(); toast(errMsg(er), true); if (code) listFiles(panel, $('#flQ', panel).value); }
+  });
+  $('#flForm', panel).addEventListener('submit', (e) => { e.preventDefault(); listFiles(panel, $('#flQ', panel).value); });
+  $('#fList', panel).addEventListener('click', async (e) => {
+    const del = e.target.closest('[data-del]');
+    if (!del) return;
+    const code = del.dataset.del;
+    if (!(await confirmBox('Delete ' + code + '?', 'The record is removed, its PDF goes to the Drive trash (you can recover it there for 30 days) and its QR code will no longer verify. The number is not reused.', 'Delete', true))) return;
+    try { await adminApi('adminDeleteDocument', code); toast(code + ' deleted'); S.records.loaded = false; listFiles(panel, $('#flQ', panel).value); } catch (er) { toast(errMsg(er), true); }
+  });
+  listFiles(panel, '');
+}
+async function listFiles(panel, text) {
+  const box = $('#fList', panel);
+  if (!box) return;
+  try {
+    const r = await adminApi('adminListDocuments', { text: String(text || '').trim(), limit: 60 });
+    box.innerHTML = r.items.length ? r.items.map((d) =>
+      '<div class="frow"><span class="mono fc">' + h(d.code) + '</span><span class="fs"><b>' + h(d.recipient ? d.recipient + ' — ' + d.subject : d.subject) + '</b><small>' +
+        h([d.officeCode, d.docType, fmtDate(d.createdAt), d.pages ? d.pages + ' p.' : ''].filter(Boolean).join(' · ')) + '</small></span>' +
+        '<span class="chip ' + h(d.status) + '">' + h(d.status) + '</span><span class="fa">' +
+        (d.pdfUrl ? '<a class="btn ghost sm" href="' + h(safeUrl(d.pdfUrl)) + '" target="_blank" rel="noopener" title="Open PDF">' + icon('ext') + '</a>' : '') +
+        '<button class="btn ghost sm danger-ghost" data-del="' + h(d.code) + '" title="Delete" aria-label="Delete ' + h(d.code) + '">' + icon('trash') + '</button></span></div>').join('') +
+      (r.total > r.items.length ? '<p class="hint" style="margin:10px 14px">Showing ' + r.items.length + ' of ' + r.total + '. Search to narrow the list.</p>' : '')
+      : '<div class="empty"><b>No files found</b>' + (text ? 'Try another search.' : 'Files you create or add appear here.') + '</div>';
+  } catch (e) { box.innerHTML = '<div class="empty"><b>Could not load files</b>' + h(errMsg(e)) + '</div>'; }
+}
 function drawLhPreview(panel) {
   const p = collect(panel);
   const uri = (k, def) => { const el = $('[data-prev="' + k + '"]', panel); return (el && el.dataset.uri) || (p[k] ? (k === 'hdrSealUrl' ? S.boot.letterhead.seal : S.boot.letterhead.footerLogos[+k.slice(7, 8) - 1]) || def : def); };
@@ -4127,7 +4358,8 @@ function drawCertBrandPreview(panel) {
     if (!p[k]) return '';
     return (el && el.dataset.uri) || cur[n - 1] || (/^data:image/.test(p[k]) ? p[k] : '');
   });
-  const brand = { logos: logos, place: p.certLogoPlace, footerStyle: p.certFooterStyle, footerText: p.certFooterText };
+  const brand = { logos: logos, place: p.certLogoPlace, size: p.certLogoSize, places: [p.certLogo1Place, p.certLogo2Place, p.certLogo3Place, p.certLogo4Place],
+    footerStyle: p.certFooterStyle, footerText: p.certFooterText };
   const design = Object.assign(certDefaults(), (S.cert && S.cert.design) || {}, { orientation: panel.dataset.orient || 'landscape', brand: 'admin' });
   const sheet = buildCertSheet({ design: design, brand: brand, merge: (x) => x, html: certMerge((S.cert && S.cert.html) || certDefaultHtml(), { Name: 'Juan Dela Cruz', School: 'Buenavista Central Elementary School' }, certExtra('CID-' + srvYear() + '-11-001', { title: 'Division Training on Contextualized Learning Resources' })),
     code: 'CID-' + srvYear() + '-11-001', qr: qrDataUrl(verifyUrlFor('CID-' + srvYear() + '-11-001')) });
@@ -4239,6 +4471,7 @@ const Mock = (function () {
     if (d.batchId && mem.batchSrc[d.batchId]) { const s = mem.batchSrc[d.batchId]; out.cert = { design: s.design, html: s.html, row: s.rows[d.batchPage - 1] || {}, nameCol: s.nameCol }; }
     return out;
   }
+  const search = (q) => fns._search(q);
   const fns = {
     getBootstrap() {
       const s = db.settings;
@@ -4251,7 +4484,7 @@ const Mock = (function () {
         page: { paperSize: 'A4', bodyFont: s.bodyFont, bodySize: s.bodySize, lineHeight: s.lineHeight, marginSide: s.marginSide, fontList: s.fontList },
         letterhead: { style: s.hdrStyle, fonts: { a: s.hdrFontA, b: s.hdrFontB, f: s.ftrFont }, lines: [s.hdrLine1, s.hdrLine2, s.hdrLine3, s.hdrLine4], seal: img(s.hdrSealUrl),
           footerLogos: [img(s.ftrLogo1Url), img(s.ftrLogo2Url), img(s.ftrLogo3Url)], footerText: s.ftrText },
-        cert: { logos: [img(s.certLogo1Url), img(s.certLogo2Url), img(s.certLogo3Url), img(s.certLogo4Url)], place: s.certLogoPlace, footerStyle: s.certFooterStyle, footerText: s.certFooterText },
+        cert: { logos: [img(s.certLogo1Url), img(s.certLogo2Url), img(s.certLogo3Url), img(s.certLogo4Url)], place: s.certLogoPlace, footerStyle: s.certFooterStyle, footerText: s.certFooterText, size: s.certLogoSize, places: [s.certLogo1Place, s.certLogo2Place, s.certLogo3Place, s.certLogo4Place] },
         offices: db.offices.filter((o) => o.active), types: db.types.filter((t) => t.active).map((t) => t.name) };
     },
     checkStaffCode(c) { reqUser(c); return true; },
@@ -4330,8 +4563,38 @@ const Mock = (function () {
       save(); return fns.listCertTemplates(c);
     },
     deleteCertTemplate(id, c) { reqUser(c); db.templates.splice(+String(id).slice(1), 1); save(); return fns.listCertTemplates(c); },
-    searchDocuments(q, c) {
-      reqUser(c);
+    searchDocuments(q, c) { reqUser(c); return search(q); },
+    getDocument(code, c) { reqUser(c); return getDoc(code); },
+    adminDeleteOffice(t, id) {
+      reqAdmin(t);
+      const i = db.offices.findIndex((x) => x.id === id); if (i < 0) throw new Error('Office not found.');
+      if (db.offices.length <= 1) throw new Error('Keep at least one office.');
+      audit('OFFICE_DELETE', db.offices[i].code); db.offices.splice(i, 1); save(); return fns.adminGetState(t);
+    },
+    adminAddDocument(t, meta) {
+      reqAdmin(t);
+      const keep = db.staff; const r = fns.reserveCode(meta, keep); delete ftok[r.code];
+      return { code: r.code, verifyUrl: r.verifyUrl, dateText: r.dateText };
+    },
+    adminAttachPdf(t, code, payload, meta) {
+      reqAdmin(t);
+      const d = doc(code); if (!d) throw new Error('Control number ' + code + ' was not found.');
+      if (d.status !== 'RESERVED' || d.batchId) throw new Error(code + ' already has a file.');
+      mem.pdfs[code] = bytesUrl(payload);
+      if (meta && meta.thumb) mem.thumbs[code] = meta.thumb;
+      d.status = 'FILED'; d.pages = (meta && meta.pages) || 1; d.filedAt = now().toISOString(); audit('UPLOAD', code); save();
+      return { code: code, fileId: 'local', url: mem.pdfs[code], revision: 0, filedAt: d.filedAt };
+    },
+    adminListDocuments(t, q) { reqAdmin(t); return search(q || {}); },
+    adminDeleteDocument(t, code) {
+      reqAdmin(t);
+      const i = db.docs.findIndex((x) => x.code === code); if (i < 0) throw new Error('Document not found.');
+      const d = db.docs[i]; db.docs.splice(i, 1);
+      if (mem.pdfs[code]) { URL.revokeObjectURL(mem.pdfs[code]); delete mem.pdfs[code]; }
+      delete mem.thumbs[code]; delete db.sources[code]; audit('DELETE', code + ' — ' + d.subject); save();
+      return { code: code, deleted: true };
+    },
+    _search(q) {
       const t = (q.text || '').toLowerCase(), tag = (q.tag || '').toUpperCase();
       let l = db.docs.filter((d) => (!q.office || d.officeCode === q.office) && (!q.type || d.docType === q.type) && (!q.status || d.status === q.status) &&
         (!tag || lines(d.tags).map((x) => x.toUpperCase()).indexOf(tag) >= 0) &&
@@ -4340,7 +4603,6 @@ const Mock = (function () {
       l = l.slice().sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : (a.code < b.code ? 1 : -1)));
       return { total: l.length, items: l.slice(q.offset || 0, (q.offset || 0) + (q.limit || 50)).map(docOut) };
     },
-    getDocument(code, c) { reqUser(c); return getDoc(code); },
     getReport(year, c) {
       reqUser(c);
       const list = db.docs.filter((d) => d.createdAt.slice(0, 4) === String(year));
