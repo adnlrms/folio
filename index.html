@@ -764,6 +764,38 @@ dialog.wide { max-width: min(980px, calc(100vw - 16px)); }
 .pg-card { position: absolute; left: 0; right: 0; background: #fff; box-shadow: var(--paper-shadow); }
 .pg-card:first-child { min-height: var(--ph); }
 
+/* text never runs past the side margins, whatever the alignment */
+.doc-body { overflow-wrap: break-word; }
+.doc-body > *, .doc-body li > * { max-width: 100%; }
+.doc-body [style*="justify"] { text-justify: inter-word; }
+.doc-body table { max-width: 100%; }
+.doc-body.col-resize, .col-dragging, .col-dragging * { cursor: col-resize !important; }
+.col-dragging .doc-body { user-select: none; }
+
+/* contextual list / table tools under the toolbar */
+.toolbar .ctxbar { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 6px 0 0; margin-top: 4px; border-top: 1px dashed var(--rule); }
+.toolbar .ctxbar[hidden] { display: none; }
+.ctxbar .ctx-label { font: 600 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--navy); padding: 0 8px 0 4px; }
+.ctxbar .tbw { width: auto; padding: 0 8px; gap: 4px; font-size: 12.5px; }
+.ctxbar .ctx-hint { margin-left: auto; color: var(--ink-3); font-size: 12px; padding: 0 6px; }
+@media (max-width: 760px) { .ctxbar .ctx-hint { display: none; } }
+
+/* paste options chip (like Word's Paste Options button) */
+.paste-chip { position: fixed; z-index: 60; display: flex; align-items: center; gap: 4px; padding: 5px; background: var(--surface); border: 1px solid var(--rule-2); border-radius: 10px; box-shadow: 0 8px 24px rgba(15, 25, 45, .18); font-size: 12.5px; }
+.paste-chip > span { font: 600 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding: 0 6px; }
+.paste-chip button { border: 1px solid transparent; background: none; padding: 6px 9px; border-radius: 7px; color: var(--ink); cursor: pointer; font: inherit; }
+.paste-chip button:hover { background: var(--surface-2); }
+.paste-chip button.on { background: var(--navy); color: #fff; }
+.paste-chip label { display: flex; align-items: center; gap: 4px; padding: 0 6px; color: var(--ink-3); border-left: 1px solid var(--rule); }
+
+/* page orientation switch in the routing slip */
+.seg { display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 3px; border: 1px solid var(--rule); border-radius: var(--r); background: var(--surface-2); }
+.seg button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 0 12px; border: 0; border-radius: calc(var(--r) - 3px); background: none; color: var(--ink-2); font: inherit; font-size: 13.5px; cursor: pointer; }
+.seg button.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(15, 25, 45, .14); }
+.seg button:disabled { opacity: .55; cursor: default; }
+.seg .pg-ico { display: inline-block; width: 10px; height: 13px; border: 1.5px solid currentColor; border-radius: 2px; }
+.seg .pg-ico.land { width: 13px; height: 10px; }
+
 </style>
 <style id="page-style">@page { size: A4; margin: 0; }</style>
 </head>
@@ -1119,6 +1151,7 @@ async function adminApi(fn) {
    State
    ===================================================================== */
 const S = {
+  orient: 'portrait',
   boot: null,
   staffCode: store.get('staff', ''),
   adminToken: sess.get('adm', ''),
@@ -1149,15 +1182,22 @@ function letterhead(over) {
     fonts: { a: (l.fonts && l.fonts.a) || 'UnifrakturMaguntia', b: (l.fonts && l.fonts.b) || 'Cinzel', f: (l.fonts && l.fonts.f) || 'Carlito' }
   };
 }
-function geom(pc, officeLine) {
-  const p = PAPERS.A4;
+/** Text may run down to just above the footer line (the line sits 81pt from the bottom of the page). */
+const FOOT_CLEAR = 84;
+/* Page orientation travels with the document as a marker at the start of its stored HTML. */
+const ORIENT_RE = /^\s*<!--orient:(landscape|portrait)-->/;
+function orientOf(html) { const m = String(html || '').match(ORIENT_RE); return m ? m[1] : 'portrait'; }
+function stripOrient(html) { return String(html || '').replace(ORIENT_RE, ''); }
+function withOrient(html, o) { return '<!--orient:' + (o === 'landscape' ? 'landscape' : 'portrait') + '-->' + stripOrient(html); }
+function geom(pc, officeLine, orient) {
+  const p = paperDims(orient);
   const ms = (parseFloat(pc.marginSide) || 25.4) * 72 / 25.4;
   const ruleTop = officeLine ? 139 : 127;
   const bodyTop = ruleTop + 17;
-  const bodyH = p.h - bodyTop - 93;
+  const bodyH = p.h - bodyTop - FOOT_CLEAR;
   // page 2 onward: no letterhead, text starts one inch from the top; the footer stays
   const contTop = 72;
-  return { w: p.w, h: p.h, ms: ms, ruleTop: ruleTop, bodyTop: bodyTop, bodyH: bodyH, contTop: contTop, contH: p.h - contTop - 93 };
+  return { w: p.w, h: p.h, ms: ms, ruleTop: ruleTop, bodyTop: bodyTop, bodyH: bodyH, contTop: contTop, contH: p.h - contTop - FOOT_CLEAR };
 }
 function footerLines(text) {
   return String(text || '').split('\n').filter((x) => x.trim()).slice(0, 5).map((line) => {
@@ -1178,7 +1218,7 @@ function buildSheet(o) {
   const pc = o.pageCfg || S.boot.page;
   const lh = o.lh || letterhead();
   const officeLine = String(o.officeLine || '').trim();
-  const g = geom(pc, officeLine);
+  const g = geom(pc, officeLine, o.orient);
   const el = document.createElement('div');
   el.className = 'sheet' + (o.editor ? ' is-editor' : '') + (o.cont ? ' cont' : '');
   const bt = o.cont ? g.contTop : g.bodyTop, bh = o.cont ? g.contH : g.bodyH;
@@ -1258,6 +1298,7 @@ function filterStyle(st, tag, align) {
       case 'vertical-align': if (/^(top|middle|bottom|super|sub|baseline)$/i.test(v)) out.push('vertical-align:' + v); break;
       case 'font-size': pt = toPt(v); if (pt && pt >= 5 && pt <= 60) out.push('font-size:' + pt + 'pt'); break;
       case 'text-indent': case 'margin-left': case 'margin-right': case 'margin-top': case 'margin-bottom': case 'padding-left':
+        if (tag === 'TABLE' && /^(margin-left|margin-right)$/.test(k) && /^auto$/i.test(v)) { out.push(k + ':auto'); break; }
         pt = toPt(v);
         // nothing may reach into the page margins: no negative side margins, at most 3 inches of indent
         if (pt != null && k !== 'text-indent') pt = Math.min(Math.max(pt, 0), k === 'margin-top' || k === 'margin-bottom' ? 72 : 216);
@@ -1286,6 +1327,7 @@ function filterStyle(st, tag, align) {
       case 'height': break;   // images keep their proportions when they are narrowed to fit the margins
       case 'list-style-type': if (/^(OL|UL)$/.test(tag) && /^(decimal|lower-alpha|upper-alpha|lower-latin|upper-latin|lower-roman|upper-roman|disc|circle|square|none)$/i.test(v)) out.push('list-style-type:' + v.toLowerCase().replace('latin', 'alpha')); break;
       case 'white-space': if (tag === 'SPAN' && /^pre$/i.test(v)) out.push('white-space:pre'); break;
+      case 'table-layout': if (tag === 'TABLE' && /^fixed$/i.test(v)) out.push('table-layout:fixed'); break;
       case 'border': case 'border-top': case 'border-right': case 'border-bottom': case 'border-left':
         if (/^(TD|TH|TABLE|P)$/.test(tag)) {
           if (/solid|double|dotted|dashed/i.test(v)) {
@@ -1340,6 +1382,7 @@ function cleanTree(node) {
       const n = a.name.toLowerCase();
       if ((n === 'colspan' || n === 'rowspan') && /^(TD|TH)$/.test(tag)) return;
       if (n === 'start' && tag === 'OL') return;
+      if (n === 'data-cont' && tag === 'OL' && a.value === '1') return;
       if (n === 'data-pi' && tag === 'P') return;
       if (n === 'type' && (tag === 'OL' || tag === 'UL')) return;
       if (n === 'href' && tag === 'A' && /^(https?:|mailto:)/i.test(a.value)) return;
@@ -1452,6 +1495,7 @@ function convertWordLists(root) {
 function textWidthPt() { return PAPERS.A4.w - 2 * ((parseFloat(S.boot && S.boot.page && S.boot.page.marginSide) || 25.4) * 72 / 25.4); }
 function sanitizeHtml(html) {
   let s = String(html || '');
+  const om = s.match(ORIENT_RE);   // the page orientation marker survives cleaning
   s = s.replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '').replace(/<!\[if[^\]]*\]>|<!\[endif\]>/gi, '').replace(/<!--[\s\S]*?-->/g, '');
   const doc = new DOMParser().parseFromString(s, 'text/html');
   const body = doc.body;
@@ -1469,7 +1513,7 @@ function sanitizeHtml(html) {
       run.appendChild(document.importNode(n, true));
     }
   });
-  return out.innerHTML;
+  return (om ? '<!--orient:' + om[1] + '-->' : '') + out.innerHTML;
 }
 function textToHtml(t) {
   return String(t || '').replace(/\r/g, '').split('\n').map((l) => '<p>' + (h(l).replace(/\t/g, '&emsp;&emsp;').replace(/ {2}/g, ' &nbsp;') || '<br>') + '</p>').join('');
@@ -1657,6 +1701,9 @@ function isBlankPara(n) {
  * opts: { code, qr, officeLine, pageCfg, lh }
  */
 function paginate(html, opts) {
+  opts = Object.assign({}, opts);
+  if (!opts.orient) opts.orient = orientOf(html);
+  html = stripOrient(html);
   opts = opts || {};
   const stage = $('#stage');
   stage.innerHTML = '';
@@ -1673,7 +1720,7 @@ function paginate(html, opts) {
   });
   const sheets = [];
   const fresh = () => {
-    const s = buildSheet({ code: opts.code, qr: opts.qr, officeLine: opts.officeLine, pageCfg: opts.pageCfg, lh: opts.lh, watermark: opts.watermark, light: opts.light, cont: sheets.length > 0 });
+    const s = buildSheet({ code: opts.code, qr: opts.qr, officeLine: opts.officeLine, pageCfg: opts.pageCfg, lh: opts.lh, watermark: opts.watermark, light: opts.light, cont: sheets.length > 0, orient: opts.orient });
     stage.appendChild(s);
     return s;
   };
@@ -1787,6 +1834,11 @@ function canvasThumb(canvas, w, q) {
   return out;
 }
 /** Every document is A4 (office policy); certificates may be A4 landscape. */
+/** Page size of a built sheet (portrait or landscape). */
+function sheetDims(sheet) {
+  const w = sheet && parseFloat(sheet.style.getPropertyValue('--pw')), hh = sheet && parseFloat(sheet.style.getPropertyValue('--ph'));
+  return w && hh ? { w: w, h: hh } : paperDims();
+}
 function paperDims(orientation) {
   const p = PAPERS.A4;
   return orientation === 'landscape' ? { w: p.h, h: p.w } : { w: p.w, h: p.h };
@@ -1805,7 +1857,7 @@ async function renderCanvas(sheet, scale) {
 /** Renders sheets to a PDF (image + invisible text layer). Returns { pdf, thumb }. */
 async function sheetsToPdf(sheets, meta, dims, onPage) {
   await ensurePdfLibs();
-  dims = dims || paperDims();
+  dims = dims || sheetDims(sheets[0]);
   const JsPDF = window.jspdf.jsPDF;
   const land = dims.w > dims.h ? 'landscape' : 'portrait';
   const pdf = new JsPDF({ unit: 'pt', format: [Math.min(dims.w, dims.h), Math.max(dims.w, dims.h)], orientation: land, compress: true });
@@ -1837,7 +1889,7 @@ function printSheets(sheets, dims) {
   const root = $('#print-root');
   root.innerHTML = '';
   sheets.forEach((s) => root.appendChild(s.cloneNode(true)));
-  const p = dims || paperDims();
+  const p = dims || sheetDims(sheets[0]);
   $('#page-style').textContent = '@page { size: ' + p.w + 'pt ' + p.h + 'pt; margin: 0; }';
   document.body.classList.add('printing');
   const done = () => { document.body.classList.remove('printing'); root.innerHTML = ''; window.removeEventListener('afterprint', done); printCleanup = null; };
@@ -1975,7 +2027,7 @@ const STARTERS = {
     '<p style="text-align:center"><b>DIVISION MEMORANDUM</b></p><p style="text-align:center">No. ______, s. ' + srvYear() + '</p><p><br></p>' +
     '<p style="text-align:center"><b>' + h((m.subject || '[SUBJECT]').toUpperCase()) + '</b></p><p><br></p>' +
     '<table><tbody><tr><td style="width:60pt">To:</td><td>Assistant Schools Division Superintendents<br>Chiefs, CID and SGOD<br>Section and Unit Heads<br>Public Schools District Supervisors<br>School Heads<br>All Others Concerned</td></tr></tbody></table><p><br></p>' +
-    '<p style="text-align:justify">1. </p><p><br></p><p style="text-align:justify">2. </p><p><br></p><p style="text-align:justify">3. Immediate dissemination of and compliance with this Memorandum is desired.</p><p><br></p><p><br></p>' +
+    '<ol><li style="text-align:justify;margin-bottom:12pt"><br></li><li style="text-align:justify;margin-bottom:12pt"><br></li><li style="text-align:justify;margin-bottom:12pt">Immediate dissemination of and compliance with this Memorandum is desired.</li></ol><p><br></p>' +
     '<p><b>[NAME OF SIGNATORY]</b></p><p>[Position]</p><p><br></p><p style="font-size:9pt">Encl.: </p><p style="font-size:9pt">Reference: </p>' + PI_LINE(),
   Advisory: (m) =>
     '<p style="text-align:center"><b>DIVISION ADVISORY</b></p><p style="text-align:center">No. ______, s. ' + srvYear() + '</p><p style="text-align:center">' + longDate() + '</p><p><br></p>' +
@@ -2161,7 +2213,7 @@ function liToPara(li) {
   nested.forEach((nl) => { anchor.parentNode.insertBefore(nl, anchor.nextSibling); anchor = nl; });
   if (after.length) {
     const rest = list.cloneNode(false);
-    if (list.tagName === 'OL') rest.setAttribute('start', String((parseInt(list.getAttribute('start'), 10) || 1) + list.children.length));
+    if (list.tagName === 'OL' && !(list.parentNode && list.parentNode.tagName === 'LI')) { rest.removeAttribute('start'); rest.setAttribute('data-cont', '1'); }
     after.forEach((x) => rest.appendChild(x));
     anchor.parentNode.insertBefore(rest, anchor.nextSibling);
   }
@@ -2178,25 +2230,48 @@ function applyList(kind) {
   const caret = saveCaret(ed);
   const units = selectedUnits(ed);
   if (!units.length) return;
+  historyMark(ed);
   const items = units.filter((u) => u.tagName === 'LI');
   const allSame = items.length === units.length && items.every((li) => listKind(li.parentNode) === kind);
   if (allSame) {
-    items.slice().reverse().forEach((li) => { if (li.parentNode && li.parentNode.parentNode && li.parentNode.parentNode.tagName !== 'LI') liToPara(li); });
+    items.slice().reverse().forEach((li) => { if (li.parentNode) { if (li.parentNode.parentNode && li.parentNode.parentNode.tagName === 'LI') promote(li); else liToPara(li); } });
   } else {
-    // lists the selection is in change kind as a whole
     const lists = [];
     items.forEach((li) => { if (lists.indexOf(li.parentNode) < 0) lists.push(li.parentNode); });
-    lists.forEach((l) => setListKind(l, kind));
+    lists.forEach((l) => {
+      const mine = items.filter((li) => li.parentNode === l);
+      const all = Array.from(l.children).filter((c) => c.tagName === 'LI');
+      if (listKind(l) === kind) return;
+      if (mine.length === all.length) { setListKind(l, kind); return; }
+      // only some items: like Word's 1. → a., they become a sub-list of the item above them
+      const first = mine[0], above = first.previousElementSibling;
+      if (above && above.tagName === 'LI') {
+        let sub = Array.from(above.children).filter((c) => /^(UL|OL)$/.test(c.tagName)).pop();
+        if (!sub || listKind(sub) !== kind) { sub = makeList(kind); above.appendChild(sub); }
+        mine.forEach((li) => sub.appendChild(li));
+      } else {
+        const part = makeList(kind);
+        l.parentNode.insertBefore(part, l);
+        mine.forEach((li) => part.appendChild(li));
+        if (l.tagName === 'OL') l.setAttribute('data-cont', '1');
+      }
+    });
     // paragraphs become items: consecutive ones share a list, and join a list of the same kind right beside them
     let cur = null;
     units.filter((u) => u.tagName !== 'LI').forEach((p) => {
       const prev = p.previousElementSibling;
       if (!(cur && prev === cur)) {
         cur = prev && /^(UL|OL)$/.test(prev.tagName) && listKind(prev) === kind ? prev : null;
-        if (!cur) { cur = makeList(kind); p.parentNode.insertBefore(cur, p); }
+        if (!cur) {
+          cur = makeList(kind);
+          p.parentNode.insertBefore(cur, p);
+          // like Word, numbering carries on from the last list of the same kind (Restart at 1 is in the list bar)
+          if (cur.tagName === 'OL' && p.parentNode === ed && previousList(cur, kind)) cur.setAttribute('data-cont', '1');
+        }
       }
       const li = document.createElement('li');
       if (p.style.textAlign) li.style.textAlign = p.style.textAlign;
+      stripTypedMarker(p);
       while (p.firstChild) li.appendChild(p.firstChild);
       if (!li.childNodes.length) li.appendChild(document.createElement('br'));
       movedTo.set(p, li);
@@ -2207,7 +2282,35 @@ function applyList(kind) {
     });
   }
   loadCaret(ed, caret);
+  renumber(ed);
   afterEdit();
+  historyMark(ed);
+}
+/** A number or bullet typed by hand at the start ("1. ", "a) ", "• ") goes, so the list marker is the only one. */
+function stripTypedMarker(p) {
+  const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+  let t;
+  while ((t = w.nextNode()) && !t.nodeValue.trim()) { /* skip empty */ }
+  if (!t) return;
+  const m = t.nodeValue.match(/^[\s\u00a0]*(\(?(\d{1,3}|[a-zA-Z]|[ivxlcIVXLC]{1,6})[.)]|[•·▪◦○\-*–])[\s\u00a0]+/);
+  if (m) t.nodeValue = t.nodeValue.slice(m[0].length);
+}
+/** The nearest earlier top-level list of the same kind. */
+function previousList(l, kind) {
+  let n = l.previousElementSibling;
+  while (n) { if (/^(OL|UL)$/.test(n.tagName) && listKind(n) === kind) return n; n = n.previousElementSibling; }
+  return null;
+}
+/** Lists marked "continue" number on from the list before them, so the sequence stays right as items change. */
+function renumber(ed) {
+  if (!ed) return;
+  Array.from(ed.children).forEach((l) => {
+    if (l.tagName !== 'OL' || l.getAttribute('data-cont') !== '1') return;
+    const prev = previousList(l, listKind(l));
+    if (!prev) { l.removeAttribute('data-cont'); l.removeAttribute('start'); return; }
+    const st = (parseInt(prev.getAttribute('start'), 10) || 1) + Array.from(prev.children).filter((c) => c.tagName === 'LI').length;
+    if (String(st) !== l.getAttribute('start')) l.setAttribute('start', String(st));
+  });
 }
 /** Tab: the item moves one level down under the item above it (1. → a. → i.). */
 function demote(li) {
@@ -2241,12 +2344,18 @@ function caretAtStart(block) {
 function ownText(li) { return Array.from(li.childNodes).filter((c) => !(c.nodeType === 1 && /^(UL|OL)$/.test(c.tagName))).map((c) => c.textContent).join('').trim(); }
 function wordKeys(e) {
   const ed = e.currentTarget;
+  if (wordShortcuts(e)) return;
+  if (e.key === 'Tab') {
+    const cell = cellAt(caretNode(), ed);
+    if (cell) { e.preventDefault(); tableTab(cell, e.shiftKey); updateCtxBar(); return; }
+  }
   const sel = window.getSelection();
   const at = sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
   let li = at && (at.nodeType === 1 ? at : at.parentNode);
   li = li && li.closest ? li.closest('li') : null;
   if (li && !ed.contains(li)) li = null;
-  const done = (c) => { loadCaret(ed, c); afterEdit(); };
+  const done = (c) => { loadCaret(ed, c); renumber(ed); afterEdit(); historyMark(ed); updateCtxBar(); };
+  if ((e.key === 'Tab' || ((e.key === 'Enter' || e.key === 'Backspace') && li))) historyMark(ed);
   if (e.key === 'Tab') {
     e.preventDefault();
     const c = saveCaret(ed);
@@ -2265,7 +2374,7 @@ function wordKeys(e) {
     r.insertNode(t);
     r.setStartAfter(t); r.collapse(true);
     sel.removeAllRanges(); sel.addRange(r);
-    afterEdit();
+    afterEdit(); historyMark(ed);
     return;
   }
   if (!li) return;
@@ -2277,7 +2386,7 @@ function wordKeys(e) {
     if (nested) { promote(li); return done(c); }
     const p = liToPara(li);
     const r = document.createRange(); r.setStart(p, 0); r.collapse(true); sel.removeAllRanges(); sel.addRange(r);
-    afterEdit();
+    renumber(ed); afterEdit(); historyMark(ed); updateCtxBar();
     return;
   }
   // Backspace at the start of an item removes its number or bullet first
@@ -2310,7 +2419,8 @@ function autoList(e) {
   sel.removeAllRanges(); sel.addRange(c);
   applyList(kind);
   const l = listAt(window.getSelection().anchorNode, ed);
-  if (l && l.tagName === 'OL' && start > 1 && l.children.length === 1) l.setAttribute('start', String(start));
+  // typing a number starts that number, as in Word ("1. " restarts, "4. " starts at 4)
+  if (l && l.tagName === 'OL' && l.children.length === 1) { l.removeAttribute('data-cont'); if (start > 1) l.setAttribute('start', String(start)); else l.removeAttribute('start'); renumber(ed); historyMark(ed); }
 }
 
 /* ---------------- the active editor (memo or certificate) ---------------- */
@@ -2318,7 +2428,7 @@ function editorBody() { return $('#paperInner .doc-body'); }
 function activeEd() { return (S.view === 'certs' && $('#certInner .doc-body')) || editorBody(); }
 function afterEdit() {
   if (S.view === 'certs') { if (typeof certChanged === 'function') certChanged(); }
-  else { saveDraft(); schedulePageCount(); }
+  else { renumber(editorBody()); saveDraft(); schedulePageCount(); }
 }
 let savedRange = null;
 function hookSelection() {
@@ -2347,22 +2457,17 @@ function restoreSel() {
 function insertHtml(html) {
   restoreSel();
   document.execCommand('insertHTML', false, html);
+  tidyInserted(activeEd());
   afterEdit();
 }
-function onPaste(e) {
-  e.preventDefault();
-  const cd = e.clipboardData || window.clipboardData;
-  if (!cd) return;
-  const files = Array.from(cd.files || []).filter((f) => /^image\//.test(f.type));
-  const html = cd.getData('text/html');
-  if (html && html.trim()) { insertHtml(sanitizeHtml(html)); return; }
-  if (files.length) {
-    const r = new FileReader();
-    r.onload = () => insertHtml('<p><img src="' + r.result + '" style="max-width:100%"></p>');
-    r.readAsDataURL(files[0]);
-    return;
-  }
-  insertHtml(textToHtml(cd.getData('text/plain')));
+/** Chrome adds "background-color: transparent" wrappers when it inserts HTML; they are removed. */
+function tidyInserted(ed) {
+  if (!ed) return;
+  $$('[style*="background-color: transparent"]', ed).forEach((el) => {
+    el.style.removeProperty('background-color');
+    if (!el.getAttribute('style')) el.removeAttribute('style');
+    if (el.tagName === 'SPAN' && !el.attributes.length) { while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el); el.remove(); }
+  });
 }
 function restoreAfterFormat(ed) {
   const sel = window.getSelection();
@@ -2400,12 +2505,14 @@ async function toolbarCmd(cmd) {
   const cert = S.view === 'certs';
   if (!cert && S.filed && ['preview', 'focus'].indexOf(cmd) < 0) { toast('This document is filed. Choose "Revise" or "Duplicate" to edit it.'); return; }
   switch (cmd) {
+    case 'undo': return historyGo(ed, -1);
+    case 'redo': return historyGo(ed, 1);
     case 'listUl': return applyList('ul');
     case 'listOl': return applyList('ol');
     case 'listAlpha': return applyList('alpha');
     case 'focus': return toggleFocus();
     case 'preview': return cert ? certPreview() : previewPages();
-    case 'pagebreak': return insertHtml('<hr class="pb"><p><br></p>');
+    case 'pagebreak': historyMark(ed); insertHtml('<hr class="pb"><p><br></p>'); return historyMark(ed);
     case 'placeholder': return certPlaceholderMenu();
     case 'starter': {
       const meta = { subject: $('#fSubject').value.trim() };
@@ -2430,14 +2537,32 @@ async function toolbarCmd(cmd) {
       const w = (100 / cols).toFixed(2) + '%';
       let t = '<table class="' + (r.data.borders ? 'grid' : '') + '" style="width:100%"><tbody>';
       for (let i = 0; i < rows; i++) { t += '<tr>'; for (let k = 0; k < cols; k++) t += '<td style="width:' + w + (cert ? ';text-align:center' : '') + '"><br></td>'; t += '</tr>'; }
-      return insertHtml(t + '</tbody></table><p><br></p>');
+      historyMark(ed);
+      insertHtml(t + '</tbody></table><p><br></p>');
+      return historyMark(ed);
     }
     default:
       restoreSel();
+      historyMark(ed);
       try { document.execCommand('styleWithCSS', false, cmd.indexOf('justify') === 0); } catch (e) { /* ignore */ }
       document.execCommand(cmd, false, null);
+      if (cmd.indexOf('justify') === 0) tidyAlign(ed);
       afterEdit();
+      historyMark(ed);
   }
+}
+/** Chrome sometimes wraps aligned text in an extra box; alignment belongs on the paragraph itself, as in Word. */
+function tidyAlign(ed) {
+  $$('div[style*="text-align"]', ed).forEach((d) => {
+    const al = d.style.textAlign;
+    const kids = Array.from(d.children);
+    if (!kids.length || !kids.every((k) => /^(P|OL|UL|H[1-6]|TABLE|BLOCKQUOTE|DIV)$/.test(k.tagName))) return;
+    kids.forEach((k) => { if (k.tagName !== 'TABLE' && !k.style.textAlign) k.style.textAlign = al; d.parentNode.insertBefore(k, d); });
+    d.remove();
+  });
+}
+function syncOrient() {
+  $$('#fOrient [data-o]').forEach((b) => { const on = b.dataset.o === S.orient; b.classList.toggle('on', on); b.setAttribute('aria-checked', on ? 'true' : 'false'); });
 }
 function toggleFocus(force) {
   const c = $('.create');
@@ -2508,6 +2633,8 @@ function renderCreate() {
       '<div class="slip-form" id="slipForm">' +
         '<label class="field"><span>Office</span><select class="select" id="fOffice">' + offs + '</select></label>' +
         '<label class="field"><span>Document type</span><select class="select" id="fType">' + types + '</select></label>' +
+        '<div class="field"><span>Page</span><div class="seg" id="fOrient" role="radiogroup" aria-label="Page orientation">' +
+          '<button type="button" role="radio" data-o="portrait"><i class="pg-ico"></i>Portrait</button><button type="button" role="radio" data-o="landscape"><i class="pg-ico land"></i>Landscape</button></div></div>' +
         '<label class="field wide"><span>Subject / title</span><textarea class="textarea" id="fSubject" rows="2" style="min-height:64px" maxlength="300" placeholder="e.g. Conduct of the 2026 Division Learning Resource Evaluation"></textarea></label>' +
         '<label class="field wide"><span>Prepared by</span><input class="input" id="fBy" maxlength="120" placeholder="Your name" autocomplete="name"></label>' +
         tagsWidget() +
@@ -2528,6 +2655,14 @@ function renderCreate() {
 
   $('#fOffice').addEventListener('change', () => { buildEditor(null); refreshNextCode(); saveDraft(); });
   $('#fType').addEventListener('change', saveDraft);
+  $$('#fOrient [data-o]').forEach((b) => b.addEventListener('click', () => {
+    if (S.filed || b.dataset.o === S.orient) return;
+    const ed = editorBody();
+    if (ed) historyMark(ed);
+    S.orient = b.dataset.o;
+    buildEditor(null);
+    saveDraft();
+  }));
   $('#fSubject').addEventListener('input', saveDraft);
   $('#fBy').addEventListener('input', () => { store.set('by', $('#fBy').value); saveDraft(); });
   wireTags();
@@ -2545,16 +2680,22 @@ function buildEditor(html) {
   const inner = $('#paperInner');
   const prev = editorBody();
   // content from drafts, the server or templates is cleaned again before it is shown
-  const content = html != null ? sanitizeHtml(html) : (prev ? prev.innerHTML : '');
+  // orientation: from the document's marker; a blank new document starts portrait; otherwise unchanged
+  if (html != null && ORIENT_RE.test(html)) S.orient = orientOf(html);
+  else if (html === '') S.orient = 'portrait';
+  if (!S.orient) S.orient = 'portrait';
+  syncOrient();
+  const content = html != null ? stripOrient(sanitizeHtml(html)) : (prev ? prev.innerHTML : '');
   inner.innerHTML = '';
-  const sheet = buildSheet({ editor: true, code: S.mode === 'revise' && S.target ? S.target.code : S.nextCode, officeLine: currentOffice().headerLine });
+  const sheet = buildSheet({ editor: true, code: S.mode === 'revise' && S.target ? S.target.code : S.nextCode, officeLine: currentOffice().headerLine, orient: S.orient });
   inner.appendChild(sheet);
   const ed = $('.doc-body', sheet);
   ed.innerHTML = content;
   lockIndexLine(ed);
   try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch (e) { /* ignore */ }
   ed.addEventListener('paste', onPaste);
-  ed.addEventListener('drop', (e) => { if (e.dataTransfer && (e.dataTransfer.types || []).indexOf('text/html') >= 0) { e.preventDefault(); insertHtml(sanitizeHtml(e.dataTransfer.getData('text/html'))); } });
+  ed.addEventListener('drop', (e) => { if (e.dataTransfer && (e.dataTransfer.types || []).indexOf('text/html') >= 0) { e.preventDefault(); historyMark(ed); insertHtml(sanitizeHtml(e.dataTransfer.getData('text/html'))); historyMark(ed); } });
+  wireWord(ed);
   ed.addEventListener('input', () => { growPages(); saveDraft(); schedulePageCount(); });
   ed.addEventListener('keydown', wordKeys);
   ed.addEventListener('input', autoList);
@@ -2588,7 +2729,7 @@ function loadDraftInto(d) {
   S.mode = d && d.mode === 'revise' && d.target ? 'revise' : 'new';
   S.target = S.mode === 'revise' ? d.target : null;
   drawTags();
-  buildEditor((d && d.html) || '');
+  buildEditor(d && d.html ? withOrient(d.html, d.orient) : '');
   updateDraftsBtn();
 }
 let draftTimer = null, lastDraftSig = '';
@@ -2599,13 +2740,13 @@ function saveDraft() {
     if (S.filed || !ed) return;
     const all = store.get('drafts', {});
     const html = ed.innerHTML;
-    const sig = S.draftId + '|' + html.length + '|' + hashStr(html) + '|' + $('#fSubject').value + '|' + $('#fType').value + '|' + $('#fOffice').value + '|' + $('#fBy').value + '|' + S.tags.join(',') + '|' + S.mode;
+    const sig = S.draftId + '|' + S.orient + '|' + html.length + '|' + hashStr(html) + '|' + $('#fSubject').value + '|' + $('#fType').value + '|' + $('#fOffice').value + '|' + $('#fBy').value + '|' + S.tags.join(',') + '|' + S.mode;
     if (sig === lastDraftSig) return;
     lastDraftSig = sig;
     const empty = !ed.textContent.trim() && !ed.querySelector('img,table') && !$('#fSubject').value.trim();
     if (empty) { delete all[S.draftId]; }
     else all[S.draftId] = { id: S.draftId, office: $('#fOffice').value, type: $('#fType').value, subject: $('#fSubject').value, by: $('#fBy').value,
-      tags: S.tags, html: html, mode: S.mode, target: S.target, at: Date.now() };
+      tags: S.tags, html: html, orient: S.orient, mode: S.mode, target: S.target, at: Date.now() };
     store.set('drafts', all);
     updateDraftsBtn();
   }, 700);
@@ -2658,7 +2799,7 @@ function schedulePageCount() {
     const ed = editorBody();
     if (S.busy || !ed || S.view !== 'create') return;
     try {
-      const sheets = paginate(markedEditorHtml(ed), { officeLine: currentOffice().headerLine, light: true });
+      const sheets = paginate(markedEditorHtml(ed), { officeLine: currentOffice().headerLine, light: true, orient: S.orient });
       const marks = sheets.slice(1).map((s) => {
         const first = $('.doc-body', s).firstElementChild;
         const mk = first && (first.hasAttribute('data-pgi') ? first : first.querySelector('[data-pgi]'));
@@ -2713,7 +2854,7 @@ function drawGuides(marks) {
   const flow = $('.pg-flow', sheet), cards = $('.pg-cards', sheet);
   if (!flow || !cards) return;
   const PT = 4 / 3;
-  const g = geom(S.boot.page, currentOffice().headerLine);
+  const g = geom(S.boot.page, currentOffice().headerLine, S.orient);
   const PH = g.h * PT, top1 = g.bodyTop * PT, top2 = g.contTop * PT;
   // measure every break in the continuous text (no gaps), then build the gaps
   // positions are taken from the top of the text area (the empty float holder), not from the editor box, whose
@@ -2791,6 +2932,7 @@ function renderSlipState() {
   const lock = !!S.filed || S.mode === 'revise';
   $('#fOffice').disabled = lock;
   ['#fType', '#fSubject', '#fBy'].forEach((s) => { $(s).disabled = !!S.filed; });
+  $$('#fOrient button').forEach((b) => { b.disabled = !!S.filed; });
   drawTags();
   mode.innerHTML = ''; filed.innerHTML = '';
   code.style.removeProperty('--stamp');
@@ -2870,7 +3012,7 @@ async function previewPages() {
   const o = currentOffice();
   const code = S.filed ? S.filed.code : S.mode === 'revise' ? S.target.code : (S.nextCode || 'CONTROL NO.');
   const qr = qrDataUrl(verifyUrlFor(code));
-  const sheets = paginate(ed.innerHTML, { code: code, qr: qr, officeLine: o.headerLine, watermark: S.filed ? null : 'DRAFT' });
+  const sheets = paginate(ed.innerHTML, { code: code, qr: qr, officeLine: o.headerLine, watermark: S.filed ? null : 'DRAFT', orient: S.orient });
   const r = openDialog({ title: 'Page preview · ' + sheets.length + (sheets.length === 1 ? ' page' : ' pages'), wide: true, body: '<div class="preview-pages" id="pv"></div>',
     actions: '<span class="hint" style="margin-right:auto;align-self:center">' + (S.filed ? 'Filed copy.' : 'DRAFT appears on previews only — not on the filed PDF or printout. ') + 'QR code points to ' + h(code) + '.</span><button class="btn primary" value="ok">Close</button>',
     noFocus: true });
@@ -2943,7 +3085,7 @@ async function fileDocument(andPrint) {
   if (!meta.subject) { $('#fSubject').focus(); return toast('Add a subject or title for this document.', true); }
   if (!meta.preparedBy) { $('#fBy').focus(); return toast('Add the name of the person preparing this document.', true); }
   if (!ed.textContent.trim() && !ed.querySelector('img,table')) return toast('The document is empty.', true);
-  const html = fillIndexLine(sanitizeHtml(ed.innerHTML), S.tags);
+  const html = withOrient(fillIndexLine(sanitizeHtml(ed.innerHTML), S.tags), S.orient);
   const isRevise = S.mode === 'revise' && S.target;
   if (!isRevise && !navigator.onLine) return queueOutbox(meta, html);
   const b = busy(isRevise ? 'Saving ' + S.target.code : 'Filing document', [isRevise ? 'Checking control number' : 'Reserving control number', 'Laying out pages', 'Rendering PDF with searchable text', 'Filing to Drive']);
@@ -3038,6 +3180,412 @@ function downloadBlob(url, name) {
   const a = document.createElement('a');
   a.href = url; a.download = name; a.rel = 'noopener';
   document.body.appendChild(a); a.click(); a.remove();
+}
+
+/* =====================================================================
+   Word-like editing: undo/redo, paste options, list and table tools,
+   column resizing and keyboard shortcuts
+   ===================================================================== */
+
+/* ---------------- undo / redo ----------------
+   Lists, tables and paste options change the page directly, which the browser's own undo cannot follow,
+   so every editor keeps its own history of snapshots (like Word's undo list). */
+const HIST = new WeakMap();
+function histOf(ed) {
+  let hs = HIST.get(ed);
+  if (!hs) { hs = { list: [], i: -1, timer: 0 }; HIST.set(ed, hs); }
+  return hs;
+}
+function snapshot(ed) { const c = saveCaret(ed); return { html: ed.innerHTML, a: c ? c.a : 0, b: c ? c.b : 0 }; }
+/** Records the editor as it is now (skips if nothing changed). */
+function historyMark(ed) {
+  if (!ed) return;
+  const hs = histOf(ed);
+  clearTimeout(hs.timer); hs.timer = 0;
+  const snap = snapshot(ed);
+  const cur = hs.list[hs.i];
+  if (cur && cur.html === snap.html) { cur.a = snap.a; cur.b = snap.b; return; }
+  hs.list = hs.list.slice(0, hs.i + 1);
+  hs.list.push(snap);
+  if (hs.list.length > 150) hs.list.shift();
+  hs.i = hs.list.length - 1;
+}
+/** Typing is grouped: a snapshot is taken after a short pause. */
+function historyLater(ed) {
+  const hs = histOf(ed);
+  clearTimeout(hs.timer);
+  hs.timer = setTimeout(() => historyMark(ed), 450);
+}
+function historyReset(ed) { HIST.delete(ed); historyMark(ed); }
+function historyGo(ed, step) {
+  const hs = histOf(ed);
+  if (hs.timer) historyMark(ed);
+  const j = hs.i + step;
+  if (j < 0 || j >= hs.list.length) return;
+  hs.i = j;
+  const s = hs.list[j];
+  ed.innerHTML = s.html;
+  if (ed === editorBody()) lockIndexLine(ed);
+  ed.focus();
+  loadCaret(ed, { a: s.a, b: s.b });
+  hidePasteChip();
+  afterEdit();
+  updateCtxBar();
+}
+
+/* ---------------- paste options (Keep Source Formatting / Merge Formatting / Keep Text Only) ---------------- */
+let pasteOnlyText = false;
+let lastPaste = null;
+/** Like Word's "Merge Formatting": keeps bold, italic, lists, tables and alignment, drops the source's fonts, sizes and colours. */
+function mergeFormatting(html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  t.content.querySelectorAll('[style]').forEach((el) => {
+    ['font-family', 'font-size', 'color', 'background-color', 'line-height', 'margin-top', 'margin-bottom', 'text-indent'].forEach((p) => el.style.removeProperty(p));
+    if (!el.getAttribute('style')) el.removeAttribute('style');
+  });
+  t.content.querySelectorAll('span:not([style])').forEach((sp) => { while (sp.firstChild) sp.parentNode.insertBefore(sp.firstChild, sp); sp.remove(); });
+  t.content.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((hx) => { const p = document.createElement('p'); const b = document.createElement('b'); while (hx.firstChild) b.appendChild(hx.firstChild); p.appendChild(b); hx.replaceWith(p); });
+  return t.innerHTML;
+}
+function pasteVariant(mode, src) {
+  if (mode === 'text') return textToHtml(src.text);
+  if (!src.html) return textToHtml(src.text);
+  const clean = sanitizeHtml(src.html);
+  return mode === 'merge' ? mergeFormatting(clean) : clean;
+}
+function onPaste(e) {
+  e.preventDefault();
+  const cd = e.clipboardData || window.clipboardData;
+  if (!cd) return;
+  const ed = activeEd();
+  const files = Array.from(cd.files || []).filter((f) => /^image\//.test(f.type));
+  const src = { html: cd.getData('text/html') || '', text: cd.getData('text/plain') || '' };
+  if (!src.html.trim() && !src.text && files.length) {
+    const r = new FileReader();
+    r.onload = () => { historyMark(ed); insertHtml('<p><img src="' + r.result + '" style="max-width:100%"></p>'); historyMark(ed); };
+    r.readAsDataURL(files[0]);
+    return;
+  }
+  const mode = pasteOnlyText ? 'text' : (store.get('pasteMode', 'keep'));
+  pasteOnlyText = false;
+  historyMark(ed);
+  const before = histOf(ed).i;
+  insertHtml(pasteVariant(mode, src));
+  renumber(ed);
+  historyMark(ed);
+  lastPaste = { ed: ed, src: src, before: before, mode: mode };
+  if (src.html.trim()) showPasteChip();
+}
+function showPasteChip() {
+  hidePasteChip();
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !lastPaste) return;
+  const rect = sel.getRangeAt(0).getBoundingClientRect();
+  const chip = document.createElement('div');
+  chip.className = 'paste-chip';
+  chip.setAttribute('role', 'toolbar');
+  chip.setAttribute('aria-label', 'Paste options');
+  const opt = (m, label, tip) => '<button type="button" data-pm="' + m + '" title="' + tip + '"' + (lastPaste.mode === m ? ' class="on"' : '') + '>' + label + '</button>';
+  chip.innerHTML = '<span>Paste</span>' + opt('keep', 'Keep formatting', 'Keep Source Formatting') + opt('merge', 'Match document', 'Merge Formatting: keep bold, lists and tables, use this document\'s font') +
+    opt('text', 'Text only', 'Keep Text Only (Ctrl+Shift+V)') +
+    '<label title="Use this choice every time"><input type="checkbox" data-pdef' + (store.get('pasteMode', 'keep') === lastPaste.mode ? ' checked' : '') + '> Default</label>';
+  document.body.appendChild(chip);
+  const top = Math.min(window.innerHeight - 52, Math.max(8, (rect.bottom || 120) + 8));
+  chip.style.top = top + 'px';
+  chip.style.left = Math.max(8, Math.min(window.innerWidth - chip.offsetWidth - 8, (rect.left || 40) - 10)) + 'px';
+  chip.addEventListener('mousedown', (e) => { if (!e.target.closest('input,label')) e.preventDefault(); });
+  chip.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pm]');
+    if (!b || !lastPaste) return;
+    const ed = lastPaste.ed, hs = histOf(ed);
+    // put the document back as it was before the paste, then paste the other way
+    hs.i = lastPaste.before;
+    const s = hs.list[hs.i];
+    ed.innerHTML = s.html;
+    if (ed === editorBody()) lockIndexLine(ed);
+    ed.focus();
+    loadCaret(ed, { a: s.a, b: s.b });
+    hs.list = hs.list.slice(0, hs.i + 1);
+    lastPaste.mode = b.dataset.pm;
+    insertHtml(pasteVariant(lastPaste.mode, lastPaste.src));
+    renumber(ed);
+    historyMark(ed);
+    const def = $('[data-pdef]', chip);
+    if (def && def.checked) store.set('pasteMode', lastPaste.mode);
+    showPasteChip();
+  });
+  $('[data-pdef]', chip).addEventListener('change', (e) => { if (e.target.checked && lastPaste) { store.set('pasteMode', lastPaste.mode); toast('Pasting will ' + ({ keep: 'keep the source formatting', merge: 'match this document', text: 'keep text only' })[lastPaste.mode] + ' from now on'); } else store.set('pasteMode', 'keep'); });
+  pasteChipTimer = setTimeout(hidePasteChip, 20000);
+}
+let pasteChipTimer = 0;
+function hidePasteChip() { clearTimeout(pasteChipTimer); $$('.paste-chip').forEach((c) => c.remove()); }
+
+/* ---------------- contextual bar: list tools and table tools ---------------- */
+function cellAt(node, ed) {
+  let x = node && (node.nodeType === 1 ? node : node.parentNode);
+  while (x && x !== ed) { if (x.tagName === 'TD' || x.tagName === 'TH') return x; x = x.parentNode; }
+  return null;
+}
+function caretNode() { const s = window.getSelection(); return s.rangeCount ? s.getRangeAt(0).startContainer : null; }
+function ctxBar() {
+  const tbar = $('[data-v="' + (S.view === 'certs' ? 'certs' : 'create') + '"] .toolbar');
+  if (!tbar) return null;
+  let bar = $('.ctxbar', tbar);
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'ctxbar';
+    bar.hidden = true;
+    tbar.appendChild(bar);
+    bar.addEventListener('mousedown', (e) => { if (!e.target.closest('input')) e.preventDefault(); });
+    bar.addEventListener('click', (e) => { const b = e.target.closest('[data-x]'); if (b) ctxCmd(b.dataset.x); });
+  }
+  return bar;
+}
+function cb(x, label, title, ic) { return '<button type="button" class="tb' + (label ? ' tbw' : '') + '" data-x="' + x + '" title="' + h(title) + '" aria-label="' + h(title) + '">' + (ic ? icon(ic) : '') + (label ? '<span>' + h(label) + '</span>' : '') + '</button>'; }
+function updateCtxBar() {
+  const ed = activeEd();
+  const bar = ctxBar();
+  if (!bar || !ed) return;
+  const n = caretNode();
+  const inside = n && ed.contains(n) && !(S.view !== 'certs' && S.filed);
+  const cell = inside ? cellAt(n, ed) : null;
+  const list = inside && !cell ? listAt(n, ed) : null;
+  const key = cell ? 'table' : list ? 'list-' + list.tagName : '';
+  if (bar.dataset.k !== key) {
+    bar.dataset.k = key;
+    if (cell) {
+      bar.innerHTML = '<span class="ctx-label">Table</span>' +
+        cb('rowAbove', 'Row above', 'Insert a row above') + cb('rowBelow', 'Row below', 'Insert a row below') +
+        cb('colLeft', 'Column left', 'Insert a column to the left') + cb('colRight', 'Column right', 'Insert a column to the right') +
+        '<span class="tb-sep"></span>' + cb('delRow', 'Delete row', 'Delete this row') + cb('delCol', 'Delete column', 'Delete this column') + cb('delTable', '', 'Delete the table', 'trash') +
+        '<span class="tb-sep"></span>' + cb('tLeft', '', 'Table to the left', 'al') + cb('tCenter', '', 'Center the table', 'ac') + cb('tRight', '', 'Table to the right', 'ar') +
+        cb('tFit', 'Fit width', 'Make the table as wide as the text') + cb('tAuto', 'Fit contents', 'Let the columns fit their contents') + cb('tBorders', 'Borders', 'Show or hide borders') +
+        '<span class="tb-sep"></span>' + cb('tUp', 'Move up', 'Move the table above the paragraph before it') + cb('tDown', 'Move down', 'Move the table below the paragraph after it') +
+        '<span class="ctx-hint">Drag a column border to resize</span>';
+    } else if (list && list.tagName === 'OL') {
+      bar.innerHTML = '<span class="ctx-label">Numbering</span>' + cb('restart', 'Restart at 1', 'Start this list again at 1') + cb('continue', 'Continue numbering', 'Carry on from the list before') +
+        cb('setval', 'Set value…', 'Choose the number this list starts at') + '<span class="tb-sep"></span>' +
+        cb('fmt1', '1, 2, 3', 'Numbers') + cb('fmta', 'a, b, c', 'Small letters') + cb('fmtA', 'A, B, C', 'Capital letters') + cb('fmti', 'i, ii, iii', 'Small Roman numerals') + cb('fmtI', 'I, II, III', 'Capital Roman numerals') +
+        '<span class="ctx-hint">Tab moves an item down a level, Shift+Tab up</span>';
+    } else if (list) {
+      bar.innerHTML = '<span class="ctx-label">Bullets</span>' + cb('bDisc', '●', 'Round bullets') + cb('bCircle', '○', 'Hollow bullets') + cb('bSquare', '■', 'Square bullets') +
+        '<span class="ctx-hint">Tab moves an item down a level, Shift+Tab up</span>';
+    } else bar.innerHTML = '';
+  }
+  bar.hidden = !key;
+}
+function ctxCmd(x) {
+  const ed = activeEd();
+  restoreSel();
+  const n = caretNode();
+  if (!n || !ed.contains(n)) return;
+  historyMark(ed);
+  const caret = saveCaret(ed);
+  const cell = cellAt(n, ed);
+  const list = listAt(n, ed);
+  const table = cell && cell.closest('table');
+  let changed = true;
+  switch (x) {
+    case 'restart': list.removeAttribute('data-cont'); list.removeAttribute('start'); break;
+    case 'continue': if (previousList(list, listKind(list)) && list.parentNode === ed) list.setAttribute('data-cont', '1'); else { changed = false; toast('There is no earlier list of this kind to continue from.'); } break;
+    case 'setval': {
+      setListValue(list);
+      return;
+    }
+    case 'fmt1': case 'fmta': case 'fmtA': case 'fmti': case 'fmtI': {
+      const t = x.slice(3);
+      list.style.listStyleType = '';
+      if (t === '1') list.removeAttribute('type'); else list.setAttribute('type', t);
+      if (!list.getAttribute('style')) list.removeAttribute('style');
+      break;
+    }
+    case 'bDisc': case 'bCircle': case 'bSquare': list.style.listStyleType = x.slice(1).toLowerCase(); break;
+    default: changed = table ? tableCmd(x, cell, table, ed) : false;
+  }
+  if (!changed) return;
+  renumber(ed);
+  if (ed.contains(caret && caret.sn)) loadCaret(ed, caret); else loadCaret(ed, { a: caret.a, b: caret.b });
+  afterEdit();
+  historyMark(ed);
+  updateCtxBar();
+}
+async function setListValue(list) {
+  const ed = activeEd();
+  const r = await openDialog({ title: 'Set numbering value', body: '<label class="field"><span>Start this list at</span><input class="input" name="v" type="number" min="1" max="999" value="' + (parseInt(list.getAttribute('start'), 10) || 1) + '"></label>',
+    actions: '<button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">OK</button>' });
+  if (!r) return;
+  const v = Math.min(999, Math.max(1, parseInt(r.data.v, 10) || 1));
+  list.removeAttribute('data-cont');
+  if (v > 1) list.setAttribute('start', String(v)); else list.removeAttribute('start');
+  renumber(ed); afterEdit(); historyMark(ed);
+}
+
+/* ---------------- tables ---------------- */
+function tableGrid(table) { return Array.from(table.rows); }
+function cellIndex(cell) { return Array.from(cell.parentNode.cells).indexOf(cell); }
+function newCell(like) {
+  const c = document.createElement(like && like.tagName === 'TH' ? 'th' : 'td');
+  if (like && like.style.width) c.style.width = like.style.width;
+  if (like && like.style.textAlign) c.style.textAlign = like.style.textAlign;
+  c.appendChild(document.createElement('br'));
+  return c;
+}
+function tableCmd(x, cell, table, ed) {
+  const row = cell.parentNode, ci = cellIndex(cell);
+  const rows = tableGrid(table);
+  const block = table;
+  switch (x) {
+    case 'rowAbove': case 'rowBelow': {
+      const nr = document.createElement('tr');
+      Array.from(row.cells).forEach((c) => { const k = newCell(c.tagName === 'TH' ? null : c); if (c.colSpan > 1) k.colSpan = c.colSpan; nr.appendChild(k); });
+      row.parentNode.insertBefore(nr, x === 'rowAbove' ? row : row.nextSibling);
+      return true;
+    }
+    case 'colLeft': case 'colRight': {
+      rows.forEach((r) => { const ref = r.cells[Math.min(ci, r.cells.length - 1)]; const k = newCell(ref); r.insertBefore(k, x === 'colLeft' ? ref : ref ? ref.nextSibling : null); });
+      evenWidths(table);
+      return true;
+    }
+    case 'delRow':
+      if (rows.length <= 1) return tableCmd('delTable', cell, table, ed);
+      row.remove(); return true;
+    case 'delCol':
+      if (row.cells.length <= 1) return tableCmd('delTable', cell, table, ed);
+      rows.forEach((r) => { const c = r.cells[Math.min(ci, r.cells.length - 1)]; if (c) c.remove(); });
+      evenWidths(table);
+      return true;
+    case 'delTable': {
+      const p = document.createElement('p'); p.appendChild(document.createElement('br'));
+      table.replaceWith(p);
+      const r = document.createRange(); r.setStart(p, 0); r.collapse(true); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      return true;
+    }
+    case 'tLeft': table.style.marginLeft = ''; table.style.marginRight = ''; return true;
+    case 'tCenter': table.style.marginLeft = 'auto'; table.style.marginRight = 'auto'; return true;
+    case 'tRight': table.style.marginLeft = 'auto'; table.style.marginRight = '0'; return true;
+    case 'tFit': table.style.width = '100%'; return true;
+    case 'tAuto': table.style.width = ''; table.style.tableLayout = ''; rows.forEach((r) => Array.from(r.cells).forEach((c) => { c.style.width = ''; })); return true;
+    case 'tBorders': table.classList.toggle('grid'); return true;
+    case 'tUp': { const prev = block.previousElementSibling; if (!prev || prev.getAttribute('data-pi')) return false; block.parentNode.insertBefore(block, prev); return true; }
+    case 'tDown': { const next = block.nextElementSibling; if (!next || next.getAttribute('data-pi')) return false; block.parentNode.insertBefore(next, block); return true; }
+    default: return false;
+  }
+}
+function evenWidths(table) {
+  const n = Math.max.apply(null, tableGrid(table).map((r) => r.cells.length));
+  if (!n) return;
+  if (!table.style.width) table.style.width = '100%';
+  tableGrid(table).forEach((r) => Array.from(r.cells).forEach((c) => { c.style.width = c.colSpan > 1 ? '' : (100 / n).toFixed(2) + '%'; }));
+}
+/** Tab goes to the next cell; Tab in the last cell adds a row (as in Word). */
+function tableTab(cell, back) {
+  const table = cell.closest('table');
+  const cells = Array.from(table.querySelectorAll('td,th')).filter((c) => c.closest('table') === table);
+  let i = cells.indexOf(cell) + (back ? -1 : 1);
+  if (i >= cells.length) { tableCmd('rowBelow', cell, table, activeEd()); i = cells.length; }
+  const all = Array.from(table.querySelectorAll('td,th')).filter((c) => c.closest('table') === table);
+  const target = all[Math.max(0, i)];
+  if (!target) return;
+  const r = document.createRange(); r.selectNodeContents(target);
+  if (!target.textContent) r.collapse(true);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+}
+
+/* ---------------- column resizing: drag a cell border like in Word ---------------- */
+let colDrag = null;
+function edgeCell(e, ed) {
+  const cell = e.target.closest && e.target.closest('td,th');
+  if (!cell || !ed.contains(cell)) return null;
+  const r = cell.getBoundingClientRect();
+  if (Math.abs(e.clientX - r.right) <= 5) return { cell: cell, side: 'right' };
+  if (Math.abs(e.clientX - r.left) <= 5 && cell.previousElementSibling) return { cell: cell.previousElementSibling, side: 'right' };
+  return null;
+}
+function wireTableResize(ed) {
+  ed.addEventListener('mousemove', (e) => {
+    if (colDrag) return;
+    const hit = edgeCell(e, ed);
+    ed.classList.toggle('col-resize', !!hit && !S.filed);
+  });
+  ed.addEventListener('mousedown', (e) => {
+    if (S.view !== 'certs' && S.filed) return;
+    const hit = edgeCell(e, ed);
+    if (!hit) return;
+    e.preventDefault();
+    const cell = hit.cell, table = cell.closest('table');
+    const next = cell.nextElementSibling;
+    const scale = table.getBoundingClientRect().width / table.offsetWidth || 1;
+    const tw = table.offsetWidth;
+    const maxW = ed.clientWidth;
+    // fix every column to its current width first, so only the dragged border moves
+    const firstRow = Array.from(table.rows).filter((r) => Array.from(r.cells).every((c) => c.colSpan === 1))[0] || table.rows[0];
+    const widths = Array.from(firstRow.cells).map((c) => c.offsetWidth);
+    historyMark(ed);
+    table.style.tableLayout = 'fixed';
+    table.style.width = ((tw / maxW) * 100).toFixed(2) + '%';
+    const setCol = (idx, px) => Array.from(table.rows).forEach((r) => { const c = r.cells[idx]; if (c && c.colSpan === 1) c.style.width = ((px / tw) * 100).toFixed(2) + '%'; });
+    widths.forEach((w, i) => setCol(i, w));
+    colDrag = { table: table, idx: cellIndex(cell), hasNext: !!next, x0: e.clientX, w0: widths[cellIndex(cell)], n0: next ? widths[cellIndex(cell) + 1] : 0, scale: scale, tw: tw, maxW: maxW, setCol: setCol };
+    document.body.classList.add('col-dragging');
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!colDrag) return;
+    const d = (e.clientX - colDrag.x0) / colDrag.scale;
+    if (colDrag.hasNext) {
+      const a = Math.max(18, Math.min(colDrag.w0 + colDrag.n0 - 18, colDrag.w0 + d));
+      colDrag.setCol(colDrag.idx, a);
+      colDrag.setCol(colDrag.idx + 1, colDrag.w0 + colDrag.n0 - a);
+    } else {
+      // the last border changes the table width, never past the right margin
+      const tw = Math.max(60, Math.min(colDrag.maxW, colDrag.tw + d));
+      colDrag.table.style.width = ((tw / colDrag.maxW) * 100).toFixed(2) + '%';
+    }
+  });
+  window.addEventListener('mouseup', () => {
+    if (!colDrag) return;
+    colDrag = null;
+    document.body.classList.remove('col-dragging');
+    afterEdit();
+    historyMark(activeEd());
+  });
+}
+
+/* ---------------- keyboard shortcuts that work like Word ---------------- */
+function wordShortcuts(e) {
+  const ed = e.currentTarget;
+  const mod = e.ctrlKey || e.metaKey;
+  if (!mod) return false;
+  const k = e.key.toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); historyGo(ed, -1); return true; }
+  if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); historyGo(ed, 1); return true; }
+  if (k === 'v' && e.shiftKey) { pasteOnlyText = true; return false; }   // the paste event follows
+  if (S.view !== 'certs' && S.filed) return false;
+  const align = { l: 'justifyLeft', e: 'justifyCenter', r: 'justifyRight', j: 'justifyFull' }[k];
+  if (align && !e.shiftKey && !e.altKey) { e.preventDefault(); toolbarCmd(align); return true; }
+  if (k === 'enter' && ed === editorBody()) { e.preventDefault(); historyMark(ed); insertHtml('<hr class="pb"><p><br></p>'); historyMark(ed); return true; }
+  if (k === 'l' && e.shiftKey) { e.preventDefault(); applyList('ul'); return true; }
+  if (k === ']' || k === '[') {
+    e.preventDefault();
+    const cur = parseFloat(getComputedStyle(window.getSelection().anchorNode.parentElement || ed).fontSize) * 0.75 || 12;
+    applyFontSize(Math.max(6, Math.min(72, Math.round(cur + (k === ']' ? 1 : -1)))));
+    return true;
+  }
+  return false;
+}
+/** Wires history, paste, the context bar, table resizing and shortcuts into an editor. */
+function wireWord(ed) {
+  ed.addEventListener('beforeinput', (e) => {
+    if (e.inputType === 'historyUndo') { e.preventDefault(); historyGo(ed, -1); }
+    else if (e.inputType === 'historyRedo') { e.preventDefault(); historyGo(ed, 1); }
+  });
+  ed.addEventListener('input', (e) => { if (e.inputType !== 'historyUndo' && e.inputType !== 'historyRedo') historyLater(ed); renumber(ed); hidePasteChip(); });
+  ed.addEventListener('keyup', updateCtxBar);
+  ed.addEventListener('mouseup', () => setTimeout(updateCtxBar, 0));
+  ed.addEventListener('focus', updateCtxBar);
+  ed.addEventListener('blur', () => setTimeout(() => { if (!document.activeElement || !document.activeElement.closest('.toolbar,.paste-chip,dialog')) { const b = ctxBar(); if (b) b.hidden = true; } }, 150));
+  wireTableResize(ed);
+  historyReset(ed);
 }
 
 /* =====================================================================
@@ -3549,6 +4097,8 @@ function buildCertEditor() {
   inner.appendChild(sheet);
   const ed = $('.cert-body', sheet);
   ed.addEventListener('paste', onPaste);
+  ed.addEventListener('keydown', (e) => { if (wordShortcuts(e)) return; if (e.key === 'Tab') { const c = cellAt(caretNode(), ed); if (c) { e.preventDefault(); tableTab(c, e.shiftKey); } } });
+  wireWord(ed);
   ed.addEventListener('input', () => { certChanged(); clearTimeout(fitT); fitT = setTimeout(() => certFitNote(sheet), 300); });
   if (window.ResizeObserver) { if (buildCertEditor.ro) buildCertEditor.ro.disconnect(); buildCertEditor.ro = new ResizeObserver(fitCert); buildCertEditor.ro.observe(sheet); }
   Promise.all([loadFont(c.design.nameFont), loadFont(c.design.bodyFont), docFontsReady(null, c.html)]).then(() => { certFitNote(sheet); fitCert(); });
@@ -4003,8 +4553,8 @@ async function recordAction(a, d) {
       $('#fSubject').value = d.subject;
       S.tags = d.tags ? d.tags.split(/\s*,\s*/).filter(Boolean) : [];
       S.draftId = newDraftId();
-      if (a === 'dup') { S.filed = null; S.mode = 'new'; S.target = null; buildEditor(full.html || ''); renderSlipState(); refreshNextCode(); saveDraft(); toast('Copied into a new document. A new control number is assigned when you file.'); }
-      else { startRevise({ code: d.code, officeCode: d.officeCode, status: 'FILED', verifyUrl: full.verifyUrl }, full.html || ''); toast('Revising ' + d.code); }
+      if (a === 'dup') { S.filed = null; S.mode = 'new'; S.target = null; buildEditor(withOrient(full.html || '', orientOf(full.html))); renderSlipState(); refreshNextCode(); saveDraft(); toast('Copied into a new document. A new control number is assigned when you file.'); }
+      else { startRevise({ code: d.code, officeCode: d.officeCode, status: 'FILED', verifyUrl: full.verifyUrl }, withOrient(full.html || '', orientOf(full.html))); toast('Revising ' + d.code); }
       return;
     }
     if (a === 'resume') {
@@ -4344,7 +4894,7 @@ async function saveSettings(patch, msg) {
   } catch (e) { toast(errMsg(e), true); }
 }
 async function reloadBoot(fresh) {
-  const html = editorBody() ? editorBody().innerHTML : null;
+  const html = editorBody() ? withOrient(editorBody().innerHTML, S.orient) : null;
   const keep = { id: S.draftId, tags: S.tags.slice(), mode: S.mode, target: S.target, filed: S.filed, subject: $('#fSubject') ? $('#fSubject').value : '' };
   S.boot = fresh || await api('getBootstrap');
   store.set('boot', S.boot);
