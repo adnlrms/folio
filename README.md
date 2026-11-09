@@ -100,3 +100,23 @@ Replace the placeholder with your `/exec` URL and keep the quotes. This is the o
 - Each QR code carries a secret key. Typing a control number without the key shows only the document's status.
 - Leave **Allow the app inside other websites** off. GitHub hosting does not need it.
 - The database is backed up weekly to `DocTrack Archive/_backups`, and the last 8 backups are kept.
+
+- Text now fills each page down to the bottom margin, and pasted content can no longer cross the margins. I checked it with a 3-page test memo pasted the way Word sends it, comparing the editor and the PDF page by page.
+
+Using the space:
+
+Pages fill to the bottom margin. On the test memo, page 1 ended 3 px short of its margin.
+A paragraph was sometimes pushed to the next page only because of its spacing, even though its text fit. That’s fixed.
+Pages 2 and later no longer start with extra space above the first paragraph.
+The editor now shows each page break in exactly the same place as the PDF. Before, a paragraph that had space above it could make the two differ by one line.
+
+Neat placement (like Word’s defaults):
+
+A paragraph never leaves just its first line at the bottom of a page, or just its last line at the top of the next one. Sometimes this leaves one empty line at the bottom of a page, as Word does.
+Headings, such as a bold “II. GUIDELINES”, stay with the text below them instead of being stranded at the bottom of a page. So do lead-in lines like “…as follows:”. In 30 different test layouts, none of these rules was broken.
+
+Margins kept safe when pasting from Word:
+
+Paragraphs and lists can no longer be pushed outside the side margins.
+Tables wider than the page are fitted to the text width, and long words inside table cells wrap.
+Large pictures shrink to fit the page and keep their shape. A picture never runs past the margins or the footer.
