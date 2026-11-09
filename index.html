@@ -255,7 +255,11 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .doc-body td, .doc-body th { padding: 1.5pt 5pt; vertical-align: top; text-align: left; }
 .doc-body table.grid { width: 100%; }
 .doc-body table.grid td, .doc-body table.grid th { border: .75pt solid #000; }
-.doc-body img { max-width: 100%; height: auto; }
+.doc-body img { max-width: 100%; height: auto; max-height: calc(var(--body-h) - 6pt); object-fit: contain; }
+.doc-body td, .doc-body th { overflow-wrap: anywhere; }
+.doc-body pre { white-space: pre-wrap; }
+/* no space above the first paragraph of a continued page; nothing may stick out past the side margins */
+.sheet.cont .doc-body > :first-child { margin-top: 0 !important; }
 .doc-body hr { border: 0; border-top: 1pt solid #000; margin: 4pt 0; }
 .doc-body a { color: #0563c1; }
 .doc-body hr.pb { border: 0; height: 0; margin: 0; }
@@ -740,6 +744,19 @@ dialog.wide { max-width: min(980px, calc(100vw - 16px)); }
 .fpager span:last-child { display: flex; gap: 8px; }
 .sheet.cert .cert-logos.beside-qr { gap: 6pt; z-index: 2; }
 
+/* editor shown as separate sheets: page 1 with letterhead, page 2 onward footer only */
+.sheet.is-editor { background: transparent; box-shadow: none; isolation: isolate; }
+.sheet.is-editor > .ft-rule, .sheet.is-editor > .ft-logo1, .sheet.is-editor > .ft-logo2, .sheet.is-editor > .ft-logo3,
+.sheet.is-editor > .ft-text, .sheet.is-editor > .ft-qr, .sheet.is-editor > .ft-code, .sheet.is-editor > .ft-page { display: none; }
+.sheet.is-editor .doc-body { padding-bottom: 0; }
+.pg-flow { height: 0; user-select: none; }
+.pg-flow i { display: block; float: right; clear: right; }
+.pg-flow .pf-s { width: 0; }
+.pg-flow .pf-g { width: 100%; }
+.pg-cards { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.pg-card { position: absolute; left: 0; right: 0; background: #fff; box-shadow: var(--paper-shadow); }
+.pg-card:first-child { min-height: var(--ph); }
+
 </style>
 <style id="page-style">@page { size: A4; margin: 0; }</style>
 </head>
@@ -1043,6 +1060,9 @@ function api(fn) {
         try { j = JSON.parse(t); } catch (e) {
           throw new Error('The app reached Google but not DocTrack. In Apps Script, deploy the web app with Execute as: Me and Who has access: Anyone, then deploy a new version.');
         }
+        if (j && !j.ok && j.error === 'Unknown action.') {
+          throw new Error('The Apps Script backend is older than this app. In Apps Script, paste the latest Code.gs, then Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy.');
+        }
         if (!j || !j.ok) throw new Error((j && j.error) || 'The server could not complete that request.');
         return j.data;
       });
@@ -1127,7 +1147,9 @@ function geom(pc, officeLine) {
   const ruleTop = officeLine ? 139 : 127;
   const bodyTop = ruleTop + 17;
   const bodyH = p.h - bodyTop - 93;
-  return { w: p.w, h: p.h, ms: ms, ruleTop: ruleTop, bodyTop: bodyTop, bodyH: bodyH };
+  // page 2 onward: no letterhead, text starts one inch from the top; the footer stays
+  const contTop = 72;
+  return { w: p.w, h: p.h, ms: ms, ruleTop: ruleTop, bodyTop: bodyTop, bodyH: bodyH, contTop: contTop, contH: p.h - contTop - 93 };
 }
 function footerLines(text) {
   return String(text || '').split('\n').filter((x) => x.trim()).slice(0, 5).map((line) => {
@@ -1141,7 +1163,8 @@ function footerLines(text) {
   }).join('');
 }
 /**
- * o: { editor, code, qr, page, pages, officeLine, pageCfg, lh }
+ * o: { editor, code, qr, page, pages, officeLine, pageCfg, lh, cont }
+ * cont: a continuation page (page 2 onward) — footer only, no letterhead.
  */
 function buildSheet(o) {
   const pc = o.pageCfg || S.boot.page;
@@ -1149,8 +1172,9 @@ function buildSheet(o) {
   const officeLine = String(o.officeLine || '').trim();
   const g = geom(pc, officeLine);
   const el = document.createElement('div');
-  el.className = 'sheet' + (o.editor ? ' is-editor' : '');
-  el.style.cssText = '--pw:' + g.w + 'pt;--ph:' + g.h + 'pt;--ms:' + g.ms.toFixed(2) + 'pt;--body-top:' + g.bodyTop + 'pt;--body-h:' + g.bodyH.toFixed(2) +
+  el.className = 'sheet' + (o.editor ? ' is-editor' : '') + (o.cont ? ' cont' : '');
+  const bt = o.cont ? g.contTop : g.bodyTop, bh = o.cont ? g.contH : g.bodyH;
+  el.style.cssText = '--pw:' + g.w + 'pt;--ph:' + g.h + 'pt;--ms:' + g.ms.toFixed(2) + 'pt;--body-top:' + bt + 'pt;--body-h:' + bh.toFixed(2) +
     'pt;--doc-font:' + fontCss(pc.bodyFont) + ';--hdr-a:' + fontCss(lh.fonts.a) + ';--hdr-b:' + fontCss(lh.fonts.b) + ';--ftr-font:' + fontCss(lh.fonts.f) + ';--doc-size:' + (parseFloat(pc.bodySize) || 12) + 'pt;--doc-lh:' + (parseFloat(pc.lineHeight) || 1.15);
   if (o.light) {
     // geometry only: used for counting pages while typing (no images, so it is fast)
@@ -1169,10 +1193,11 @@ function buildSheet(o) {
   } else {
     qr = '<div class="ft-qr ph">QR<br>ON FILE</div><div class="ft-code" style="color:#8a93a3">' + h(o.code || 'CONTROL NO.') + '</div>';
   }
-  el.innerHTML =
+  el.innerHTML = (o.cont ? '' :
     '<div class="lh-img lh-seal" style="background-image:url(' + lh.seal + ')"></div>' + head +
     (officeLine ? '<div class="lh-line lh-5">' + h(officeLine) + '</div>' : '') +
-    '<div class="lh-rule" style="top:' + g.ruleTop + 'pt"></div>' +
+    '<div class="lh-rule" style="top:' + g.ruleTop + 'pt"></div>') +
+    (o.editor ? '<div class="pg-flow" aria-hidden="true" contenteditable="false"></div><div class="pg-cards" aria-hidden="true"></div>' : '') +
     '<div class="doc-body"' + (o.editor ? ' contenteditable="true" spellcheck="true" data-placeholder="Type, or paste from Word — formatting is kept."' : '') + '></div>' +
     '<div class="ft-rule"></div>' +
     '<div class="lh-img ft-logo1" style="background-image:url(' + lh.logos[0] + ')"></div>' +
@@ -1225,8 +1250,12 @@ function filterStyle(st, tag, align) {
       case 'vertical-align': if (/^(top|middle|bottom|super|sub|baseline)$/i.test(v)) out.push('vertical-align:' + v); break;
       case 'font-size': pt = toPt(v); if (pt && pt >= 5 && pt <= 60) out.push('font-size:' + pt + 'pt'); break;
       case 'text-indent': case 'margin-left': case 'margin-right': case 'margin-top': case 'margin-bottom': case 'padding-left':
-        pt = toPt(v); if (pt != null && Math.abs(pt) <= 300) out.push(k + ':' + pt + 'pt'); break;
-      case 'margin': { const parts = v.split(/\s+/).map(toPt); if (parts.length && parts.every((x) => x != null && Math.abs(x) <= 300)) out.push('margin:' + parts.map((x) => x + 'pt').join(' ')); break; }
+        pt = toPt(v);
+        // nothing may reach into the page margins: no negative side margins, at most 3 inches of indent
+        if (pt != null && k !== 'text-indent') pt = Math.min(Math.max(pt, 0), k === 'margin-top' || k === 'margin-bottom' ? 72 : 216);
+        if (pt != null && k === 'text-indent') pt = Math.min(Math.max(pt, -72), 216);
+        if (pt != null && Math.abs(pt) <= 300) out.push(k + ':' + pt + 'pt'); break;
+      case 'margin': { const parts = v.split(/\s+/).map(toPt); if (parts.length && parts.length <= 4 && parts.every((x) => x != null && Math.abs(x) <= 300)) out.push('margin:' + parts.map((x) => Math.min(Math.max(x, 0), 216) + 'pt').join(' ')); break; }
       case 'padding': if (/^(TD|TH)$/.test(tag)) { const parts = v.split(/\s+/).map(toPt); if (parts.every((x) => x != null && x >= 0 && x <= 60)) out.push('padding:' + parts.map((x) => x + 'pt').join(' ')); } break;
       case 'line-height':
         if (/^[\d.]+%$/.test(v)) { const n = parseFloat(v) / 100; if (n >= 0.7 && n <= 3) out.push('line-height:' + n); }
@@ -1242,8 +1271,11 @@ function filterStyle(st, tag, align) {
         if (pick && pick !== fontName(S.boot.page.bodyFont)) { out.push('font-family:' + fontCss(pick)); loadFont(pick); }
         break;
       }
-      case 'width': if (/^(TD|TH|TABLE|COL|IMG)$/.test(tag)) { if (/^[\d.]+%$/.test(v)) out.push('width:' + v); else { pt = toPt(v); if (pt && pt > 0 && pt <= 800) out.push('width:' + pt + 'pt'); } } break;
-      case 'height': if (tag === 'IMG') { pt = toPt(v); if (pt && pt > 0) out.push('height:' + pt + 'pt'); } break;
+      case 'width': if (/^(TD|TH|TABLE|COL|IMG)$/.test(tag)) {
+        if (/^[\d.]+%$/.test(v)) out.push('width:' + Math.min(100, parseFloat(v)) + '%');
+        else { pt = toPt(v); if (pt && pt > 0 && pt <= 800) out.push(tag === 'TABLE' && pt > textWidthPt() ? 'width:100%' : 'width:' + pt + 'pt'); }
+      } break;
+      case 'height': break;   // images keep their proportions when they are narrowed to fit the margins
       case 'border': case 'border-top': case 'border-right': case 'border-bottom': case 'border-left':
         if (/^(TD|TH|TABLE|P)$/.test(tag)) {
           if (/solid|double|dotted|dashed/i.test(v)) {
@@ -1257,6 +1289,14 @@ function filterStyle(st, tag, align) {
       default: break;
     }
   });
+  // a hanging first line (negative indent) may only reach back to the margin, never past it
+  const ti = out.filter((x) => /^text-indent:-/.test(x))[0];
+  if (ti) {
+    const need = -parseFloat(ti.split(':')[1]);
+    const ml = out.filter((x) => /^margin-left:/.test(x))[0];
+    const have = ml ? parseFloat(ml.split(':')[1]) : 0;
+    if (have < need) { if (ml) out.splice(out.indexOf(ml), 1); out.push('margin-left:' + need + 'pt'); }
+  }
   return out.join(';');
 }
 function unwrap(el) {
@@ -1328,6 +1368,8 @@ function cleanTree(node) {
     if (tag === 'SPAN' && !ch.getAttribute('style')) unwrap(ch);
   });
 }
+/** Width of the text area between the side margins, in points. */
+function textWidthPt() { return PAPERS.A4.w - 2 * ((parseFloat(S.boot && S.boot.page && S.boot.page.marginSide) || 25.4) * 72 / 25.4); }
 function sanitizeHtml(html) {
   let s = String(html || '');
   s = s.replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '').replace(/<!\[if[^\]]*\]>|<!\[endif\]>/gi, '').replace(/<!--[\s\S]*?-->/g, '');
@@ -1356,8 +1398,53 @@ function textToHtml(t) {
    Paginator — splits content across fixed pages like a word processor
    ===================================================================== */
 const TEXT_BLOCK = /^(P|H[1-6]|BLOCKQUOTE|DIV|LI|PRE)$/;
-function fits(body) { return body.scrollHeight <= body.clientHeight + 1; }
-function trial(body, el) { body.appendChild(el); const ok = fits(body); body.removeChild(el); return ok; }
+/**
+ * True when the content ends inside the text area. The space after the last paragraph is not counted, so a
+ * paragraph whose text fits is not pushed to the next page just because of its spacing. cut: px to keep free.
+ */
+function fits(body, cut) {
+  const last = body.lastElementChild;
+  const room = body.clientHeight - (cut || 0) + 1;
+  if (!last) return body.scrollHeight <= room;
+  return last.offsetTop + last.offsetHeight <= room;
+}
+function trial(body, el, cut) { body.appendChild(el); const ok = fits(body, cut); body.removeChild(el); return ok; }
+function lineHeightOf(el) {
+  const cs = getComputedStyle(el);
+  const lh = parseFloat(cs.lineHeight);
+  return lh > 0 ? lh : (parseFloat(cs.fontSize) || 16) * 1.15;
+}
+function linesOf(el, body) {
+  body.appendChild(el);
+  const cs = getComputedStyle(el);
+  const inner = el.offsetHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0) - (parseFloat(cs.borderTopWidth) || 0) - (parseFloat(cs.borderBottomWidth) || 0);
+  const n = Math.max(1, Math.round(inner / lineHeightOf(el)));
+  body.removeChild(el);
+  return n;
+}
+/** Section headings and lead-in lines ("…as follows:") stay with what comes after them. */
+function keepWithNext(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (/^H[1-6]$/.test(el.tagName)) return true;
+  if (!/^(P|DIV)$/.test(el.tagName) || el.querySelector('img,table')) return false;
+  const t = el.textContent.replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 200) return false;
+  if (/:$/.test(t)) return true;
+  if (t.length > 120) return false;
+  const bold = (n) => /^(B|STRONG)$/.test(n.tagName) || /^(bold|[6-9]00)$/.test(n.style.fontWeight || '');
+  if (bold(el)) return true;
+  // every bit of text is inside bold
+  const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let tn, any = false;
+  while ((tn = w.nextNode())) {
+    if (!tn.nodeValue.trim()) continue;
+    any = true;
+    let p = tn.parentNode, b = false;
+    while (p && p !== el.parentNode) { if (p.nodeType === 1 && bold(p)) { b = true; break; } p = p.parentNode; }
+    if (!b) return false;
+  }
+  return any;
+}
 function countWords(el) {
   let n = 0;
   const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -1391,14 +1478,14 @@ function sliceWords(el, start, end) {
   drop.forEach((x) => x.remove());
   return c;
 }
-function splitText(el, body, wrap) {
+function splitText(el, body, wrap, cut) {
   wrap = wrap || ((x) => x);
   const total = countWords(el);
   if (total < 2) return [null, el];
   let lo = 1, hi = total - 1, best = 0;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (trial(body, wrap(sliceWords(el, 0, mid)))) { best = mid; lo = mid + 1; } else hi = mid - 1;
+    if (trial(body, wrap(sliceWords(el, 0, mid)), cut)) { best = mid; lo = mid + 1; } else hi = mid - 1;
   }
   if (!best) return [null, el];
   const a = sliceWords(el, 0, best), b = sliceWords(el, best, total);
@@ -1467,6 +1554,20 @@ function splitNode(node, body) {
   if (TEXT_BLOCK.test(t)) return splitText(node, body);
   return [null, node];
 }
+/**
+ * Like Word's widow/orphan control: a paragraph never leaves a single line at the foot of a page or a single
+ * line at the top of the next one.
+ */
+function balanceSplit(node, parts, body) {
+  if (!parts[0] || !/^(P|DIV|BLOCKQUOTE|H[1-6])$/.test(node.tagName)) return parts;
+  const aLines = linesOf(parts[0], body), bLines = linesOf(parts[1], body);
+  if (aLines < 2 && body.children.length) return [null, node];           // lone first line: move the paragraph
+  if (bLines < 2 && aLines >= 3) {                                        // lone last line: take one more along
+    const again = splitText(node, body, null, lineHeightOf(parts[0]) * 0.9 + 1);
+    if (again[0] && linesOf(again[0], body) >= 2) return again;
+  }
+  return parts;
+}
 function isBlankPara(n) {
   return n.nodeType === 1 && /^(P|DIV)$/.test(n.tagName) && !n.querySelector('img,table,hr') && !n.textContent.replace(/[\s ]/g, '');
 }
@@ -1491,7 +1592,7 @@ function paginate(html, opts) {
   });
   const sheets = [];
   const fresh = () => {
-    const s = buildSheet({ code: opts.code, qr: opts.qr, officeLine: opts.officeLine, pageCfg: opts.pageCfg, lh: opts.lh, watermark: opts.watermark, light: opts.light });
+    const s = buildSheet({ code: opts.code, qr: opts.qr, officeLine: opts.officeLine, pageCfg: opts.pageCfg, lh: opts.lh, watermark: opts.watermark, light: opts.light, cont: sheets.length > 0 });
     stage.appendChild(s);
     return s;
   };
@@ -1507,9 +1608,15 @@ function paginate(html, opts) {
     body.appendChild(node);
     if (fits(body)) continue;
     body.removeChild(node);
-    const parts = splitNode(node, body);
+    const parts = balanceSplit(node, splitNode(node, body), body);
     if (parts[0]) { body.appendChild(parts[0]); next(); overflowed = true; if (parts[1]) queue.unshift(parts[1]); }
-    else if (body.childNodes.length) { next(); overflowed = true; queue.unshift(node); }
+    else if (body.childNodes.length) {
+      // a heading or lead-in left alone at the foot of the page goes to the next page with its text
+      const last = body.lastElementChild;
+      if (last && body.children.length > 1 && keepWithNext(last)) { body.removeChild(last); queue.unshift(node); queue.unshift(last); }
+      else queue.unshift(node);
+      next(); overflowed = true;
+    }
     else { body.appendChild(node); next(); overflowed = true; }
   }
   if (body.childNodes.length || !sheets.length) sheets.push(sheet); else sheet.remove();
@@ -2115,6 +2222,7 @@ function buildEditor(html) {
   savedRange = null;
   if (S.filed) ed.setAttribute('contenteditable', 'false');
   if (window.ResizeObserver) { if (buildEditor.ro) buildEditor.ro.disconnect(); buildEditor.ro = new ResizeObserver(fitEditor); buildEditor.ro.observe(sheet); }
+  drawGuides([]);
   fitEditor();
   docFontsReady(null, content).then(schedulePageCount);
 }
@@ -2225,7 +2333,7 @@ function schedulePageCount() {
       $('#pageCount').textContent = n + (n === 1 ? ' page' : ' pages');
       drawGuides(marks);
     } catch (e) { /* layout will retry on the next edit */ }
-  }), 700);
+  }), 350);
 }
 function wordTop(el, w) {
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -2241,31 +2349,63 @@ function wordTop(el, w) {
   }
   return null;
 }
+/**
+ * Shows the editor as separate A4 sheets, like Word. The paginator decides where each page ends (the same rules
+ * as the PDF); full-width floats then push the text after each break onto the next sheet, so typing and pasting
+ * flow across pages. Page 1 has the letterhead; pages 2 onward have only the footer with the page number.
+ */
+const PAGE_GAP = 22;   // px between sheets on screen
+function breakY(ed, mk, top, scale) {
+  const node = ed.childNodes[mk.i];
+  if (!node) return null;
+  let target = node, y = null;
+  if (node.nodeType === 1 && mk.r != null) target = Array.from(node.rows || []).filter((r) => r.parentNode.tagName !== 'THEAD')[mk.r] || node;
+  else if (node.nodeType === 1 && mk.l != null) target = Array.from(node.children).filter((x) => x.tagName === 'LI')[mk.l] || node;
+  if (mk.w) y = wordTop(target.nodeType === 3 ? node.parentNode : target, mk.w);
+  if (y == null) {
+    if (target.nodeType === 3) { const rg = document.createRange(); rg.selectNodeContents(target); const r = rg.getClientRects()[0]; y = r ? r.top : null; }
+    else y = target.getBoundingClientRect().top;
+  }
+  return y == null ? null : (y - top) / scale;
+}
 function drawGuides(marks) {
   const sheet = $('#paperInner .sheet'), ed = editorBody();
   if (!sheet || !ed) return;
-  $$('.pg-guide', sheet).forEach((x) => x.remove());
-  const sr = sheet.getBoundingClientRect();
-  const scale = sr.width / sheet.offsetWidth || 1;
-  marks.forEach((mk, j) => {
-    if (!mk) return;
-    const node = ed.childNodes[mk.i];
-    if (!node) return;
-    let target = node, y = null;
-    if (node.nodeType === 1 && mk.r != null) target = Array.from(node.rows || []).filter((r) => r.parentNode.tagName !== 'THEAD')[mk.r] || node;
-    else if (node.nodeType === 1 && mk.l != null) target = Array.from(node.children).filter((x) => x.tagName === 'LI')[mk.l] || node;
-    if (mk.w) y = wordTop(target.nodeType === 3 ? node.parentNode : target, mk.w);
-    if (y == null) {
-      if (target.nodeType === 3) { const rg = document.createRange(); rg.selectNodeContents(target); const r = rg.getClientRects()[0]; y = r ? r.top : null; }
-      else y = target.getBoundingClientRect().top;
-    }
-    if (y == null) return;
-    const g = document.createElement('div');
-    g.className = 'pg-guide';
-    g.style.top = Math.round((y - sr.top) / scale - 3) + 'px';
-    g.innerHTML = '<span>Page ' + (j + 2) + '</span>';
-    sheet.appendChild(g);
+  const flow = $('.pg-flow', sheet), cards = $('.pg-cards', sheet);
+  if (!flow || !cards) return;
+  const PT = 4 / 3;
+  const g = geom(S.boot.page, currentOffice().headerLine);
+  const PH = g.h * PT, top1 = g.bodyTop * PT, top2 = g.contTop * PT;
+  // measure every break in the continuous text (no gaps), then build the gaps
+  // positions are taken from the top of the text area (the empty float holder), not from the editor box, whose
+  // top moves when the first paragraph has space above it
+  flow.innerHTML = '';
+  const scale = sheet.getBoundingClientRect().width / sheet.offsetWidth || 1;
+  const bt = flow.getBoundingClientRect().top;
+  const ys = [];
+  marks.forEach((mk) => { if (!mk) return; const y = breakY(ed, mk, bt, scale); if (y != null && y > (ys[ys.length - 1] || 0) + 1) ys.push(y); });
+  const n = ys.length + 1;
+  // float coordinates start at the top of the page-1 text; page k's text starts at fk
+  const fAt = (k) => (k === 0 ? 0 : k * (PH + PAGE_GAP) + top2 - top1);
+  let html = '', prev = 0;
+  ys.forEach((y, k) => {
+    const sp = y - prev + 1;   // ends 1px into the first line of the next page, which pushes that line past the gap
+    html += '<i class="pf-s" style="height:' + sp.toFixed(2) + 'px"></i><i class="pf-g" style="height:' + Math.max(0, fAt(k + 1) - fAt(k) - sp).toFixed(2) + 'px"></i>';
+    prev = y;
   });
+  flow.innerHTML = html;
+  sheet.style.height = (n * PH + (n - 1) * PAGE_GAP) + 'px';
+  // sheets: page 1 keeps the letterhead drawn on the editor; every sheet gets the footer and page number
+  const foot = Array.from(sheet.children).filter((c) => /\b(ft-rule|ft-logo1|ft-logo2|ft-logo3|ft-text|ft-qr|ft-code)\b/.test(c.className)).map((c) => c.outerHTML).join('');
+  if (cards.dataset.n !== String(n) || cards.dataset.f !== String(foot.length)) {
+    cards.dataset.n = String(n); cards.dataset.f = String(foot.length);
+    let c = '';
+    for (let k = 0; k < n; k++) {
+      c += '<div class="pg-card" style="top:' + (k * (PH + PAGE_GAP)) + 'px;height:' + PH + 'px">' + foot +
+        (n > 1 ? '<div class="ft-page">Page ' + (k + 1) + ' of ' + n + '</div>' : '') + '</div>';
+    }
+    cards.innerHTML = c;
+  }
 }
 
 /* ---------------- slip state ---------------- */
@@ -4913,6 +5053,8 @@ async function boot() {
   }
 }
 document.addEventListener('DOMContentLoaded', boot);
+// test hook, browser-only preview mode only
+if (!LIVE && /[?&]dttest=1/.test(location.search)) window.__dtTest = { paginate: paginate, markedEditorHtml: markedEditorHtml, editorBody: editorBody, S: S };
 })();
 
 </script>
