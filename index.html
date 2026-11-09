@@ -204,7 +204,7 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .tb-select { height: 32px; min-height: 32px; width: auto; padding: 0 26px 0 8px; font-size: 13px; flex: none; }
 .pagecount { margin-left: auto; padding-left: 12px; font: 500 12px var(--f-mono); color: var(--ink-3); white-space: nowrap; }
 .paper-scroll { flex: 1; padding: 28px 20px 60px; overflow: auto; }
-.paper-fit { margin: 0 auto; transform-origin: top left; }
+.paper-fit { margin: 0 auto; transform-origin: top left; overflow: clip; overflow-clip-margin: 24px; }
 
 /* ============ The document sheet (always white, print-accurate) ============ */
 .sheet {
@@ -250,6 +250,13 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .doc-body h1 { font-size: 1.5em; margin: 0; } .doc-body h2 { font-size: 1.3em; margin: 0; }
 .doc-body h3 { font-size: 1.15em; margin: 0; } .doc-body h4 { font-size: 1em; margin: 0; }
 .doc-body ul, .doc-body ol { margin: 0; padding-left: 24pt; }
+/* Word's multilevel defaults: 1. → a. → i. and • → ○ → ▪ (a list's own style always wins) */
+.doc-body ol:not([type]):not([style*="list-style"]) ol:not([type]):not([style*="list-style"]) { list-style-type: lower-alpha; }
+.doc-body ol:not([type]):not([style*="list-style"]) ol:not([type]):not([style*="list-style"]) ol:not([type]):not([style*="list-style"]) { list-style-type: lower-roman; }
+.doc-body ul:not([style*="list-style"]) ul:not([style*="list-style"]) { list-style-type: circle; }
+.doc-body ul:not([style*="list-style"]) ul:not([style*="list-style"]) ul:not([style*="list-style"]) { list-style-type: square; }
+.doc-body li > ul, .doc-body li > ol, .doc-body ul > ul, .doc-body ol > ol, .doc-body ul > ol, .doc-body ol > ul { margin: 0; }
+.doc-body { tab-size: 36pt; -moz-tab-size: 36pt; }
 .doc-body blockquote { margin: 0 0 0 36pt; }
 .doc-body table { border-collapse: collapse; max-width: 100%; }
 .doc-body td, .doc-body th { padding: 1.5pt 5pt; vertical-align: top; text-align: left; }
@@ -781,6 +788,7 @@ dialog.wide { max-width: min(980px, calc(100vw - 16px)); }
     <symbol id="i-aj" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></symbol>
     <symbol id="i-ul" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></symbol>
     <symbol id="i-ol" viewBox="0 0 24 24"><path d="M10 6h10M10 12h10M10 18h10"/><path d="M4 4.5h1.5V9M3.8 9h3.2M4 14.3c.4-.9 2.6-1 2.6.4 0 1-2.6 1.6-2.6 3.3h2.8"/></symbol>
+    <symbol id="i-ola" viewBox="0 0 24 24"><path d="M10 6h10M10 12h10M10 18h10"/><path d="M6.4 5.2v3.6M6.4 6.8c0-1.3-2.6-1.3-2.6.3 0 1.6 2.6 1.6 2.6.2M6.4 15.2v3.6M6.4 16.8c0-1.3-2.6-1.3-2.6.3 0 1.6 2.6 1.6 2.6.2"/></symbol>
     <symbol id="i-indent" viewBox="0 0 24 24"><path d="M4 5h16M11 10h9M11 14h9M4 19h16"/><path d="m4 9 3 3-3 3"/></symbol>
     <symbol id="i-outdent" viewBox="0 0 24 24"><path d="M4 5h16M11 10h9M11 14h9M4 19h16"/><path d="M7 9l-3 3 3 3"/></symbol>
     <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/></symbol>
@@ -1026,7 +1034,7 @@ const DEFAULT_SETTINGS = {
     'This information is stored in the Division\'s Google Workspace (Google Sheets and Google Drive), is accessible only to authorized personnel, and is used solely for records management and document authentication, in accordance with Republic Act No. 10173, the Data Privacy Act of 2012.\n\n' +
     'You may request access to, correction of, or deletion of your personal data through the Division\'s Data Protection Officer at agusan.norte@deped.gov.ph.',
   codeFormat: '{OFFICE}-{YYYY}-{MM}-{SEQ}', seqPadding: '3', seqReset: 'monthly',
-  paperSize: 'A4', bodyFont: 'Arimo', bodySize: '12', lineHeight: '1.15', marginSide: '25.4',
+  paperSize: 'A4', bodyFont: 'Bookman Old Style', bodySize: '12', lineHeight: '1.15', marginSide: '25.4',
   fontList: 'Arimo\nTinos\nCarlito\nCaladea\nGelasio\nBookman Old Style\nEB Garamond\nLibre Baskerville\nLora\nMerriweather\nRoboto\nOpen Sans\nLato\nMontserrat\nSource Sans 3\nCinzel\nGreat Vibes\nPinyon Script\nPlayfair Display',
   hdrFontA: 'UnifrakturMaguntia', hdrFontB: 'Cinzel', ftrFont: 'Carlito',
   verifyBaseUrl: '', pdfSharing: 'link', allowRevisions: 'true', allowEmbed: 'false',
@@ -1276,6 +1284,8 @@ function filterStyle(st, tag, align) {
         else { pt = toPt(v); if (pt && pt > 0 && pt <= 800) out.push(tag === 'TABLE' && pt > textWidthPt() ? 'width:100%' : 'width:' + pt + 'pt'); }
       } break;
       case 'height': break;   // images keep their proportions when they are narrowed to fit the margins
+      case 'list-style-type': if (/^(OL|UL)$/.test(tag) && /^(decimal|lower-alpha|upper-alpha|lower-latin|upper-latin|lower-roman|upper-roman|disc|circle|square|none)$/i.test(v)) out.push('list-style-type:' + v.toLowerCase().replace('latin', 'alpha')); break;
+      case 'white-space': if (tag === 'SPAN' && /^pre$/i.test(v)) out.push('white-space:pre'); break;
       case 'border': case 'border-top': case 'border-right': case 'border-bottom': case 'border-left':
         if (/^(TD|TH|TABLE|P)$/.test(tag)) {
           if (/solid|double|dotted|dashed/i.test(v)) {
@@ -1368,6 +1378,76 @@ function cleanTree(node) {
     if (tag === 'SPAN' && !ch.getAttribute('style')) unwrap(ch);
   });
 }
+/* ---------------- Word lists and tabs ----------------
+   Word sends lists as paragraphs with the number or bullet typed in front ("1.", "a)", "·"). They become real
+   lists here, so they never show a second number or bullet and they renumber like Word when edited. */
+const LIST_LEVEL = /mso-list:\s*(l\d+)\s+level(\d+)/i;
+function markerType(m, prevType) {
+  m = m.replace(/[\s\u00a0]+/g, '');
+  let r;
+  if ((r = m.match(/^\(?(\d+)[.)]?$/))) return { tag: 'OL', type: '1', start: +r[1] };
+  if (/^\(?[ivxlc]+[.)]$/.test(m) && prevType !== 'a') return { tag: 'OL', type: 'i', start: romanToInt(m.replace(/[^ivxlc]/g, '')) };
+  if (/^\(?[IVXLC]+[.)]$/.test(m) && prevType !== 'A') return { tag: 'OL', type: 'I', start: romanToInt(m.replace(/[^IVXLC]/g, '').toLowerCase()) };
+  if ((r = m.match(/^\(?([a-z])[.)]$/))) return { tag: 'OL', type: 'a', start: r[1].charCodeAt(0) - 96 };
+  if ((r = m.match(/^\(?([A-Z])[.)]$/))) return { tag: 'OL', type: 'A', start: r[1].charCodeAt(0) - 64 };
+  if (/^(o|◦)$/.test(m)) return { tag: 'UL', type: 'circle' };
+  if (/^(§|▪|■|ð|Ø|ü|v|q|\u2022\u2022)$/.test(m)) return { tag: 'UL', type: 'square' };
+  return { tag: 'UL', type: 'disc' };
+}
+function romanToInt(t) {
+  const v = { i: 1, v: 5, x: 10, l: 50, c: 100 };
+  let n = 0;
+  for (let i = 0; i < t.length; i++) { const a = v[t[i]] || 0, b = v[t[i + 1]] || 0; n += a < b ? -a : a; }
+  return n || 1;
+}
+function convertWordLists(root) {
+  // Word tab characters
+  Array.from(root.querySelectorAll('[style*="mso-tab-count" i]')).forEach((el) => {
+    const n = Math.min(8, parseInt((el.getAttribute('style').match(/mso-tab-count:\s*(\d+)/i) || [])[1], 10) || 1);
+    const t = root.ownerDocument.createElement('span');
+    t.setAttribute('style', 'white-space:pre');
+    t.textContent = '\t'.repeat(n);
+    el.replaceWith(t);
+  });
+  const containers = [root].concat(Array.from(root.querySelectorAll('td,th,div,blockquote')));
+  containers.forEach((box) => {
+    let stack = [];
+    Array.from(box.children).forEach((p) => {
+      const m = (p.getAttribute('style') || '').match(LIST_LEVEL);
+      if (!m || !/^(P|H[1-6]|DIV)$/.test(p.tagName)) { stack = []; return; }
+      const level = Math.min(9, +m[2]);
+      const mk = p.querySelector('[style*="mso-list:ignore" i], [style*="mso-list: ignore" i]');
+      let markerEl = mk;
+      while (markerEl && markerEl.parentNode !== p && markerEl.parentNode.textContent.trim() === markerEl.textContent.trim()) markerEl = markerEl.parentNode;
+      const sameLevel = stack.filter((x) => x.level === level)[0];
+      const t = markerType(mk ? mk.textContent : '', sameLevel && sameLevel.type);
+      if (markerEl) markerEl.remove();
+      const doc = root.ownerDocument;
+      while (stack.length && stack[stack.length - 1].level > level) stack.pop();
+      let top = stack[stack.length - 1];
+      if (top && top.level === level && (top.tag !== t.tag || (top.tag === 'OL' && top.type !== t.type) || (top.tag === 'UL' && top.type !== t.type && t.tag === 'UL'))) {
+        stack.pop(); top = stack[stack.length - 1];
+        if (top && top.level === level) top = null;
+      }
+      if (!top || top.level < level) {
+        const list = doc.createElement(t.tag);
+        if (t.tag === 'OL' && t.type !== '1') list.setAttribute('type', t.type);
+        if (t.tag === 'UL' && t.type !== 'disc') list.setAttribute('style', 'list-style-type:' + t.type);
+        if (t.tag === 'OL' && t.start > 1) list.setAttribute('start', String(t.start));
+        if (top) { const li = top.list.lastElementChild; (li || top.list).appendChild(list); } else p.parentNode.insertBefore(list, p);
+        top = { level: level, list: list, tag: t.tag, type: t.type };
+        stack.push(top);
+      }
+      const li = doc.createElement('li');
+      const al = (p.getAttribute('style') || '').match(/text-align:\s*(center|right|justify)/i) || (p.getAttribute('align') || '').match(/(center|right|justify)/i);
+      if (al) li.setAttribute('style', 'text-align:' + al[1].toLowerCase());
+      while (p.firstChild) li.appendChild(p.firstChild);
+      top.list.appendChild(li);
+      p.remove();
+    });
+  });
+}
+
 /** Width of the text area between the side margins, in points. */
 function textWidthPt() { return PAPERS.A4.w - 2 * ((parseFloat(S.boot && S.boot.page && S.boot.page.marginSide) || 25.4) * 72 / 25.4); }
 function sanitizeHtml(html) {
@@ -1375,6 +1455,7 @@ function sanitizeHtml(html) {
   s = s.replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '').replace(/<!\[if[^\]]*\]>|<!\[endif\]>/gi, '').replace(/<!--[\s\S]*?-->/g, '');
   const doc = new DOMParser().parseFromString(s, 'text/html');
   const body = doc.body;
+  convertWordLists(body);
   cleanTree(body);
   // wrap stray top-level inline content into paragraphs
   const out = document.createElement('div');
@@ -1936,7 +2017,7 @@ function toolbarHtml(kind) {
     '<span class="tb-sep"></span>' +
     tb('justifyLeft', 'Align left', 'al') + tb('justifyCenter', 'Center', 'ac') + tb('justifyRight', 'Align right', 'ar') + tb('justifyFull', 'Justify', 'aj') +
     '<span class="tb-sep"></span>' +
-    (kind === 'memo' ? tb('insertUnorderedList', 'Bulleted list', 'ul') + tb('insertOrderedList', 'Numbered list', 'ol') + tb('outdent', 'Decrease indent', 'outdent') + tb('indent', 'Increase indent', 'indent') + '<span class="tb-sep"></span>' : '') +
+    (kind === 'memo' ? tb('listUl', 'Bullets', 'ul') + tb('listOl', 'Numbering (1, 2, 3)', 'ol') + tb('listAlpha', 'Lettering (a, b, c)', 'ola') + tb('outdent', 'Decrease indent', 'outdent') + tb('indent', 'Increase indent', 'indent') + '<span class="tb-sep"></span>' : '') +
     tb('table', 'Insert table', 'table') + (kind === 'memo' ? tb('pagebreak', 'Insert page break', 'pb') : '') + tb('removeFormat', 'Clear formatting', 'eraser') +
     (kind === 'memo' ? tb('starter', 'Insert template for this document type', 'doc') : tb('placeholder', 'Insert a column from the recipient list', 'brace')) +
     '<span class="tb-sep"></span>' + (kind === 'memo' ? tb('focus', 'Focus mode (hide the routing slip)', 'focus') : '') + tb('preview', 'Preview', 'eye') +
@@ -1976,6 +2057,260 @@ function fitPaperTo(fit, inner, sc, zoom, rangeEl) {
     const fb = rangeEl.parentNode.querySelector('[data-fit]');
     if (fb) fb.classList.toggle('on', zoom === 'fit');
   }
+}
+
+/* ---------------- lists and keys that behave like Word ---------------- */
+const LIST_KINDS = { ul: { tag: 'UL', type: '' }, ol: { tag: 'OL', type: '' }, alpha: { tag: 'OL', type: 'a' } };
+function listAt(node, ed) {
+  while (node && node !== ed) { if (node.nodeType === 1 && /^(UL|OL)$/.test(node.tagName)) return node; node = node.parentNode; }
+  return null;
+}
+function listKind(l) {
+  if (l.tagName === 'UL') return 'ul';
+  const t = l.getAttribute('type') || (/lower-alpha/.test(l.style.listStyleType) ? 'a' : '');
+  return t === 'a' ? 'alpha' : 'ol';
+}
+function makeList(kind) {
+  const k = LIST_KINDS[kind], l = document.createElement(k.tag);
+  if (k.type) l.setAttribute('type', k.type);
+  return l;
+}
+function setListKind(l, kind) {
+  const k = LIST_KINDS[kind];
+  let nl = l;
+  if (l.tagName !== k.tag) {
+    nl = document.createElement(k.tag);
+    Array.from(l.attributes).forEach((a) => nl.setAttribute(a.name, a.value));
+    while (l.firstChild) nl.appendChild(l.firstChild);
+    l.replaceWith(nl);
+  }
+  nl.removeAttribute('type'); nl.style.listStyleType = '';
+  if (!nl.getAttribute('style')) nl.removeAttribute('style');
+  if (nl.tagName === 'UL') nl.removeAttribute('start');
+  if (k.type) nl.setAttribute('type', k.type);
+  return nl;
+}
+/** Remembers the selection by text position so it survives moving paragraphs around. */
+function saveCaret(ed) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  const pos = (node, off) => { const x = document.createRange(); x.setStart(ed, 0); x.setEnd(node, off); return x.toString().length; };
+  try { return { a: pos(r.startContainer, r.startOffset), b: pos(r.endContainer, r.endOffset), sn: r.startContainer, so: r.startOffset, en: r.endContainer, eo: r.endOffset }; } catch (e) { return null; }
+}
+const movedTo = new WeakMap();   // paragraph → the list item that took its content
+function loadCaret(ed, c) {
+  if (!c) return;
+  // the same nodes are moved, not copied, so the exact spot can usually be put back
+  const fix = (n, o) => { if (ed.contains(n)) return [n, o]; const m = movedTo.get(n); return m && ed.contains(m) ? [m, Math.min(o, m.childNodes.length)] : null; };
+  const A = fix(c.sn, c.so), B = fix(c.en, c.eo);
+  if (A && B) {
+    try { const r = document.createRange(); r.setStart(A[0], A[1]); r.setEnd(B[0], B[1]); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); return; } catch (e) { /* fall back to text position */ }
+  }
+  const find = (n) => {
+    const w = document.createTreeWalker(ed, NodeFilter.SHOW_TEXT);
+    let t, left = n, last = null;
+    while ((t = w.nextNode())) { last = t; if (left <= t.nodeValue.length) return [t, left]; left -= t.nodeValue.length; }
+    return last ? [last, last.nodeValue.length] : [ed, 0];
+  };
+  const a = find(c.a), b = find(c.b), r = document.createRange();
+  try { r.setStart(a[0], a[1]); r.setEnd(b[0], b[1]); } catch (e) { r.selectNodeContents(ed); r.collapse(false); }
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+}
+/** The paragraphs or list items the selection touches, in order. */
+function selectedUnits(ed) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return [];
+  const r = sel.getRangeAt(0);
+  const unitOf = (n) => {
+    let x = n.nodeType === 1 ? n : n.parentNode;
+    while (x && x !== ed) {
+      if (x.tagName === 'LI') return x;
+      if (x.parentNode === ed) return x;
+      x = x.parentNode;
+    }
+    return null;
+  };
+  const out = [];
+  const add = (u) => { if (u && out.indexOf(u) < 0 && !(u.tagName === 'P' && u.getAttribute('data-pi'))) out.push(u); };
+  add(unitOf(r.startContainer));
+  ed.querySelectorAll('li, :scope > *').forEach((u) => {
+    if (u.tagName !== 'LI' && u.parentNode !== ed) return;
+    if (u.tagName !== 'LI' && /^(UL|OL)$/.test(u.tagName)) return;
+    if (u.tagName === 'LI' && Array.from(u.querySelectorAll('li')).some((x) => r.intersectsNode(x)) && !r.intersectsNode(u.firstChild || u)) return;
+    if (r.intersectsNode(u)) add(u);
+  });
+  add(unitOf(r.endContainer));
+  return out.filter((u) => /^(LI|P|DIV|H[1-6]|BLOCKQUOTE)$/.test(u.tagName)).sort((a, b) => (a.compareDocumentPosition(b) & 4 ? -1 : 1));
+}
+/** Takes one item out of its list as a normal paragraph, splitting the list around it. */
+function liToPara(li) {
+  const list = li.parentNode;
+  const p = document.createElement('p');
+  if (li.style.textAlign) p.style.textAlign = li.style.textAlign;
+  Array.from(li.childNodes).forEach((c) => { if (!(c.nodeType === 1 && /^(UL|OL)$/.test(c.tagName))) p.appendChild(c); });
+  const nested = Array.from(li.children).filter((c) => /^(UL|OL)$/.test(c.tagName));
+  const after = [];
+  let n = li.nextSibling;
+  while (n) { after.push(n); n = n.nextSibling; }
+  li.remove();
+  movedTo.set(li, p);
+  if (!p.childNodes.length) p.appendChild(document.createElement('br'));
+  list.parentNode.insertBefore(p, list.nextSibling);
+  let anchor = p;
+  nested.forEach((nl) => { anchor.parentNode.insertBefore(nl, anchor.nextSibling); anchor = nl; });
+  if (after.length) {
+    const rest = list.cloneNode(false);
+    if (list.tagName === 'OL') rest.setAttribute('start', String((parseInt(list.getAttribute('start'), 10) || 1) + list.children.length));
+    after.forEach((x) => rest.appendChild(x));
+    anchor.parentNode.insertBefore(rest, anchor.nextSibling);
+  }
+  if (!list.children.length) list.remove();
+  return p;
+}
+/**
+ * Bullets, numbering and lettering, Word style: the same button again removes the list; a different one turns
+ * the list into that kind. A list never gets a second marker, and paragraphs join a list right next to them.
+ */
+function applyList(kind) {
+  const ed = activeEd();
+  restoreSel();
+  const caret = saveCaret(ed);
+  const units = selectedUnits(ed);
+  if (!units.length) return;
+  const items = units.filter((u) => u.tagName === 'LI');
+  const allSame = items.length === units.length && items.every((li) => listKind(li.parentNode) === kind);
+  if (allSame) {
+    items.slice().reverse().forEach((li) => { if (li.parentNode && li.parentNode.parentNode && li.parentNode.parentNode.tagName !== 'LI') liToPara(li); });
+  } else {
+    // lists the selection is in change kind as a whole
+    const lists = [];
+    items.forEach((li) => { if (lists.indexOf(li.parentNode) < 0) lists.push(li.parentNode); });
+    lists.forEach((l) => setListKind(l, kind));
+    // paragraphs become items: consecutive ones share a list, and join a list of the same kind right beside them
+    let cur = null;
+    units.filter((u) => u.tagName !== 'LI').forEach((p) => {
+      const prev = p.previousElementSibling;
+      if (!(cur && prev === cur)) {
+        cur = prev && /^(UL|OL)$/.test(prev.tagName) && listKind(prev) === kind ? prev : null;
+        if (!cur) { cur = makeList(kind); p.parentNode.insertBefore(cur, p); }
+      }
+      const li = document.createElement('li');
+      if (p.style.textAlign) li.style.textAlign = p.style.textAlign;
+      while (p.firstChild) li.appendChild(p.firstChild);
+      if (!li.childNodes.length) li.appendChild(document.createElement('br'));
+      movedTo.set(p, li);
+      cur.appendChild(li);
+      p.remove();
+      const nx = cur.nextElementSibling;
+      if (nx && /^(UL|OL)$/.test(nx.tagName) && listKind(nx) === kind && nx !== cur) { while (nx.firstChild) cur.appendChild(nx.firstChild); nx.remove(); }
+    });
+  }
+  loadCaret(ed, caret);
+  afterEdit();
+}
+/** Tab: the item moves one level down under the item above it (1. → a. → i.). */
+function demote(li) {
+  const prev = li.previousElementSibling;
+  if (!prev || prev.tagName !== 'LI') return false;
+  const list = li.parentNode;
+  let sub = Array.from(prev.children).filter((c) => /^(UL|OL)$/.test(c.tagName)).pop();
+  if (!sub) { sub = document.createElement(list.tagName); if (list.tagName === 'UL' && list.style.listStyleType) sub.style.listStyleType = ''; prev.appendChild(sub); }
+  sub.appendChild(li);
+  return true;
+}
+/** Shift+Tab: one level up; at the top level the item becomes a normal paragraph. */
+function promote(li) {
+  const list = li.parentNode, owner = list.parentNode;
+  if (!owner || owner.tagName !== 'LI') { liToPara(li); return; }
+  const after = [];
+  let n = li.nextSibling;
+  while (n) { after.push(n); n = n.nextSibling; }
+  owner.parentNode.insertBefore(li, owner.nextSibling);
+  if (after.length) { const sub = list.cloneNode(false); after.forEach((x) => sub.appendChild(x)); li.appendChild(sub); }
+  if (!list.children.length) list.remove();
+}
+function caretAtStart(block) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed) return false;
+  const r = document.createRange();
+  r.selectNodeContents(block);
+  r.setEnd(sel.anchorNode, sel.anchorOffset);
+  return !r.toString().replace(/​/g, '').length;
+}
+function ownText(li) { return Array.from(li.childNodes).filter((c) => !(c.nodeType === 1 && /^(UL|OL)$/.test(c.tagName))).map((c) => c.textContent).join('').trim(); }
+function wordKeys(e) {
+  const ed = e.currentTarget;
+  const sel = window.getSelection();
+  const at = sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+  let li = at && (at.nodeType === 1 ? at : at.parentNode);
+  li = li && li.closest ? li.closest('li') : null;
+  if (li && !ed.contains(li)) li = null;
+  const done = (c) => { loadCaret(ed, c); afterEdit(); };
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const c = saveCaret(ed);
+    if (li) {
+      const units = selectedUnits(ed).filter((u) => u.tagName === 'LI');
+      (units.length ? units : [li]).forEach((x) => (e.shiftKey ? promote(x) : demote(x)));
+      return done(c);
+    }
+    if (e.shiftKey) return;
+    // a tab stop every half inch, as in Word
+    const r = sel.getRangeAt(0);
+    r.deleteContents();
+    const t = document.createElement('span');
+    t.style.whiteSpace = 'pre';
+    t.textContent = '\t';
+    r.insertNode(t);
+    r.setStartAfter(t); r.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r);
+    afterEdit();
+    return;
+  }
+  if (!li) return;
+  // Enter on an empty item ends the list (or moves up a level), as in Word
+  if (e.key === 'Enter' && !e.shiftKey && !ownText(li) && !li.querySelector('img')) {
+    e.preventDefault();
+    const c = saveCaret(ed);
+    const nested = li.parentNode.parentNode && li.parentNode.parentNode.tagName === 'LI';
+    if (nested) { promote(li); return done(c); }
+    const p = liToPara(li);
+    const r = document.createRange(); r.setStart(p, 0); r.collapse(true); sel.removeAllRanges(); sel.addRange(r);
+    afterEdit();
+    return;
+  }
+  // Backspace at the start of an item removes its number or bullet first
+  if (e.key === 'Backspace' && caretAtStart(li)) {
+    e.preventDefault();
+    const c = saveCaret(ed);
+    promote(li);
+    return done(c);
+  }
+}
+/** Typing "1. ", "a) ", "- " or "* " at the start of a paragraph starts a list, like Word's AutoFormat. */
+function autoList(e) {
+  if (!e || e.inputType !== 'insertText' || e.data !== ' ') return;
+  const ed = e.currentTarget;
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed) return;
+  const node = sel.anchorNode;
+  const block = node && (node.nodeType === 1 ? node : node.parentNode).closest('p,div');
+  if (!block || block === ed || block.parentNode !== ed || block.getAttribute('data-pi')) return;
+  const r = document.createRange();
+  r.selectNodeContents(block); r.setEnd(sel.anchorNode, sel.anchorOffset);
+  const typed = r.toString().replace(/ /g, ' ');
+  let m, kind = null, start = 1;
+  if ((m = typed.match(/^(\d{1,3})[.)] $/))) { kind = 'ol'; start = +m[1]; }
+  else if ((m = typed.match(/^([a-z])[.)] $/))) { kind = 'alpha'; start = m[1].charCodeAt(0) - 96; }
+  else if (/^[-*•] $/.test(typed)) kind = 'ul';
+  if (!kind) return;
+  r.deleteContents();
+  const c = document.createRange(); c.setStart(block, 0); c.collapse(true);
+  sel.removeAllRanges(); sel.addRange(c);
+  applyList(kind);
+  const l = listAt(window.getSelection().anchorNode, ed);
+  if (l && l.tagName === 'OL' && start > 1 && l.children.length === 1) l.setAttribute('start', String(start));
 }
 
 /* ---------------- the active editor (memo or certificate) ---------------- */
@@ -2065,6 +2400,9 @@ async function toolbarCmd(cmd) {
   const cert = S.view === 'certs';
   if (!cert && S.filed && ['preview', 'focus'].indexOf(cmd) < 0) { toast('This document is filed. Choose "Revise" or "Duplicate" to edit it.'); return; }
   switch (cmd) {
+    case 'listUl': return applyList('ul');
+    case 'listOl': return applyList('ol');
+    case 'listAlpha': return applyList('alpha');
     case 'focus': return toggleFocus();
     case 'preview': return cert ? certPreview() : previewPages();
     case 'pagebreak': return insertHtml('<hr class="pb"><p><br></p>');
@@ -2217,8 +2555,9 @@ function buildEditor(html) {
   try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch (e) { /* ignore */ }
   ed.addEventListener('paste', onPaste);
   ed.addEventListener('drop', (e) => { if (e.dataTransfer && (e.dataTransfer.types || []).indexOf('text/html') >= 0) { e.preventDefault(); insertHtml(sanitizeHtml(e.dataTransfer.getData('text/html'))); } });
-  ed.addEventListener('input', () => { saveDraft(); schedulePageCount(); });
-  ed.addEventListener('keydown', (e) => { if (e.key === 'Tab') { e.preventDefault(); document.execCommand(e.shiftKey ? 'outdent' : 'indent'); } });
+  ed.addEventListener('input', () => { growPages(); saveDraft(); schedulePageCount(); });
+  ed.addEventListener('keydown', wordKeys);
+  ed.addEventListener('input', autoList);
   savedRange = null;
   if (S.filed) ed.setAttribute('contenteditable', 'false');
   if (window.ResizeObserver) { if (buildEditor.ro) buildEditor.ro.disconnect(); buildEditor.ro = new ResizeObserver(fitEditor); buildEditor.ro.observe(sheet); }
@@ -2384,18 +2723,29 @@ function drawGuides(marks) {
   const bt = flow.getBoundingClientRect().top;
   const ys = [];
   marks.forEach((mk) => { if (!mk) return; const y = breakY(ed, mk, bt, scale); if (y != null && y > (ys[ys.length - 1] || 0) + 1) ys.push(y); });
-  const n = ys.length + 1;
-  // float coordinates start at the top of the page-1 text; page k's text starts at fk
+  // float coordinates start at the top of the page-1 text; page k's text starts at fAt(k)
   const fAt = (k) => (k === 0 ? 0 : k * (PH + PAGE_GAP) + top2 - top1);
+  const cap = (k) => (k === 0 ? g.bodyH : g.contH) * PT;
   let html = '', prev = 0;
   ys.forEach((y, k) => {
     const sp = y - prev + 1;   // ends 1px into the first line of the next page, which pushes that line past the gap
     html += '<i class="pf-s" style="height:' + sp.toFixed(2) + 'px"></i><i class="pf-g" style="height:' + Math.max(0, fAt(k + 1) - fAt(k) - sp).toFixed(2) + 'px"></i>';
     prev = y;
   });
+  // the last page ends at the footer: a line that would touch it moves to a new page at once, while typing,
+  // and the next page does the same
+  const n = ys.length + 1;
+  for (let k = n - 1; k <= n; k++) {
+    html += '<i class="pf-s" style="height:' + (cap(k) + 0.5).toFixed(2) + 'px"></i><i class="pf-g" style="height:' + Math.max(0, fAt(k + 1) - fAt(k) - cap(k) - 0.5).toFixed(2) + 'px"></i>';
+  }
   flow.innerHTML = html;
+  sheet._pg = { PH: PH, fAt: fAt };
+  renderPages(sheet, n);
+}
+function renderPages(sheet, n) {
+  const cards = $('.pg-cards', sheet), PH = sheet._pg.PH;
   sheet.style.height = (n * PH + (n - 1) * PAGE_GAP) + 'px';
-  // sheets: page 1 keeps the letterhead drawn on the editor; every sheet gets the footer and page number
+  // page 1 keeps the letterhead drawn on the editor; every sheet gets the footer and its page number
   const foot = Array.from(sheet.children).filter((c) => /\b(ft-rule|ft-logo1|ft-logo2|ft-logo3|ft-text|ft-qr|ft-code)\b/.test(c.className)).map((c) => c.outerHTML).join('');
   if (cards.dataset.n !== String(n) || cards.dataset.f !== String(foot.length)) {
     cards.dataset.n = String(n); cards.dataset.f = String(foot.length);
@@ -2405,7 +2755,20 @@ function drawGuides(marks) {
         (n > 1 ? '<div class="ft-page">Page ' + (k + 1) + ' of ' + n + '</div>' : '') + '</div>';
     }
     cards.innerHTML = c;
+    const pc = $('#pageCount'); if (pc) pc.textContent = n + (n === 1 ? ' page' : ' pages');
   }
+}
+/** Adds the next sheet the moment the text reaches the footer, without waiting for the full page layout. */
+function growPages() {
+  const sheet = $('#paperInner .sheet'), ed = editorBody();
+  if (!sheet || !ed || !sheet._pg) return;
+  const flow = $('.pg-flow', sheet), cards = $('.pg-cards', sheet);
+  const scale = sheet.getBoundingClientRect().width / sheet.offsetWidth || 1;
+  const bottom = (ed.getBoundingClientRect().bottom - flow.getBoundingClientRect().top) / scale;
+  let need = 1;
+  while (need < 400 && sheet._pg.fAt(need) < bottom - 2) need++;
+  const n = +cards.dataset.n || 1;
+  if (need > n) { renderPages(sheet, need); fitEditor(); }
 }
 
 /* ---------------- slip state ---------------- */
