@@ -272,8 +272,11 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .doc-body hr { border: 0; border-top: 1pt solid #000; margin: 4pt 0; }
 .doc-body a { color: #0563c1; }
 .doc-body hr.pb { border: 0; height: 0; margin: 0; }
-.sheet.is-editor .doc-body hr.pb { border-top: 1.5px dashed #8aa0c6; margin: 14pt 0; position: relative; overflow: visible; }
-.sheet.is-editor .doc-body hr.pb::after { content: "PAGE BREAK"; position: absolute; left: 50%; top: -7pt; transform: translateX(-50%); background: #fff; padding: 0 6pt; font: 600 7pt 'IBM Plex Mono', monospace; color: #6c7f9f; letter-spacing: .1em; }
+/* in the editor a page break takes no space (as in the PDF): its mark is drawn just below the text above it */
+.sheet.is-editor .doc-body hr.pb { border: 0; height: 0; margin: 0; position: relative; overflow: visible; }
+.sheet.is-editor .doc-body hr.pb::before { content: ""; position: absolute; left: 0; right: 0; top: 6pt; border-top: 1.5px dashed #8aa0c6; }
+.sheet.is-editor .doc-body hr.pb::after { content: "PAGE BREAK"; position: absolute; left: 50%; top: 2pt; transform: translateX(-50%); background: #fff; padding: 0 6pt; font: 600 7pt 'IBM Plex Mono', monospace; color: #6c7f9f; letter-spacing: .1em; }
+.doc-body [data-pggap] { user-select: none; pointer-events: none; }
 .sheet.is-editor .doc-body table td, .sheet.is-editor .doc-body table th { outline: 1px dotted #c7cfdb; outline-offset: -1px; }
 
 /* ============ Records ============ */
@@ -798,6 +801,10 @@ dialog.wide { max-width: min(980px, calc(100vw - 16px)); }
 .seg .pg-ico { display: inline-block; width: 10px; height: 13px; border: 1.5px solid currentColor; border-radius: 2px; }
 .seg .pg-ico.land { width: 13px; height: 10px; }
 
+/* page gaps inside a table that continues on the next page (on screen only) */
+.doc-body tr[data-pggap] > td { border: 0 !important; padding: 0 !important; outline: 0 !important; background: transparent !important; }
+.doc-body.row-resize, .row-dragging, .row-dragging * { cursor: row-resize !important; }
+
 </style>
 <style id="page-style">@page { size: A4; margin: 0; }</style>
 </head>
@@ -826,6 +833,8 @@ dialog.wide { max-width: min(980px, calc(100vw - 16px)); }
     <symbol id="i-indent" viewBox="0 0 24 24"><path d="M4 5h16M11 10h9M11 14h9M4 19h16"/><path d="m4 9 3 3-3 3"/></symbol>
     <symbol id="i-outdent" viewBox="0 0 24 24"><path d="M4 5h16M11 10h9M11 14h9M4 19h16"/><path d="M7 9l-3 3 3 3"/></symbol>
     <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/></symbol>
+    <symbol id="i-pgadd" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M12 11v6M9 14h6"/></symbol>
+    <symbol id="i-pgdel" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 14h6"/></symbol>
     <symbol id="i-pb" viewBox="0 0 24 24"><path d="M6 3v5h12V3M6 21v-5h12v5"/><path d="M3 12h2M8 12h2M14 12h2M19 12h2"/></symbol>
     <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M5 7h11M10.5 7 8 19"/><path d="m15 14 5 5M20 14l-5 5"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
@@ -1326,7 +1335,8 @@ function filterStyle(st, tag, align) {
         if (/^[\d.]+%$/.test(v)) out.push('width:' + Math.min(100, parseFloat(v)) + '%');
         else { pt = toPt(v); if (pt && pt > 0 && pt <= 800) out.push(tag === 'TABLE' && pt > textWidthPt() ? 'width:100%' : 'width:' + pt + 'pt'); }
       } break;
-      case 'height': break;   // images keep their proportions when they are narrowed to fit the margins
+      // images keep their proportions when narrowed to fit the margins; table rows keep a height set by hand
+      case 'height': if (/^(TR|TD|TH)$/.test(tag)) { pt = toPt(v); if (pt && pt > 0 && pt <= 700) out.push('height:' + pt + 'pt'); } break;
       case 'list-style-type': if (/^(OL|UL)$/.test(tag) && /^(decimal|lower-alpha|upper-alpha|lower-latin|upper-latin|lower-roman|upper-roman|disc|circle|square|none)$/i.test(v)) out.push('list-style-type:' + v.toLowerCase().replace('latin', 'alpha')); break;
       case 'white-space': if (tag === 'SPAN' && /^pre$/i.test(v)) out.push('white-space:pre'); break;
       case 'table-layout': if (tag === 'TABLE' && /^fixed$/i.test(v)) out.push('table-layout:fixed'); break;
@@ -1501,6 +1511,7 @@ function sanitizeHtml(html) {
   s = s.replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '').replace(/<!\[if[^\]]*\]>|<!\[endif\]>/gi, '').replace(/<!--[\s\S]*?-->/g, '');
   const doc = new DOMParser().parseFromString(s, 'text/html');
   const body = doc.body;
+  body.querySelectorAll('[data-pggap]').forEach((x) => x.remove());   // on-screen page gaps inside tables
   convertWordLists(body);
   cleanTree(body);
   // wrap stray top-level inline content into paragraphs
@@ -1533,44 +1544,15 @@ function fits(body, cut) {
   const last = body.lastElementChild;
   const room = body.clientHeight - (cut || 0) + 1;
   if (!last) return body.scrollHeight <= room;
-  return last.offsetTop + last.offsetHeight <= room;
+  // measured to the fraction of a pixel, the same way the editor lays out its pages
+  const br = body.getBoundingClientRect(), k = br.height / (body.offsetHeight || 1) || 1;
+  return (last.getBoundingClientRect().bottom - br.top) / k <= room;
 }
 function trial(body, el, cut) { body.appendChild(el); const ok = fits(body, cut); body.removeChild(el); return ok; }
-function lineHeightOf(el) {
-  const cs = getComputedStyle(el);
-  const lh = parseFloat(cs.lineHeight);
-  return lh > 0 ? lh : (parseFloat(cs.fontSize) || 16) * 1.15;
-}
-function linesOf(el, body) {
-  body.appendChild(el);
-  const cs = getComputedStyle(el);
-  const inner = el.offsetHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0) - (parseFloat(cs.borderTopWidth) || 0) - (parseFloat(cs.borderBottomWidth) || 0);
-  const n = Math.max(1, Math.round(inner / lineHeightOf(el)));
-  body.removeChild(el);
-  return n;
-}
 /** Section headings and lead-in lines ("…as follows:") stay with what comes after them. */
 function keepWithNext(el) {
-  if (!el || el.nodeType !== 1) return false;
-  if (/^H[1-6]$/.test(el.tagName)) return true;
-  if (!/^(P|DIV)$/.test(el.tagName) || el.querySelector('img,table')) return false;
-  const t = el.textContent.replace(/\s+/g, ' ').trim();
-  if (!t || t.length > 200) return false;
-  if (/:$/.test(t)) return true;
-  if (t.length > 120) return false;
-  const bold = (n) => /^(B|STRONG)$/.test(n.tagName) || /^(bold|[6-9]00)$/.test(n.style.fontWeight || '');
-  if (bold(el)) return true;
-  // every bit of text is inside bold
-  const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let tn, any = false;
-  while ((tn = w.nextNode())) {
-    if (!tn.nodeValue.trim()) continue;
-    any = true;
-    let p = tn.parentNode, b = false;
-    while (p && p !== el.parentNode) { if (p.nodeType === 1 && bold(p)) { b = true; break; } p = p.parentNode; }
-    if (!b) return false;
-  }
-  return any;
+  // like Word's Heading styles: only real headings stay with the text after them
+  return !!(el && el.nodeType === 1 && /^H[1-6]$/.test(el.tagName));
 }
 function countWords(el) {
   let n = 0;
@@ -1734,14 +1716,9 @@ function splitNode(node, body) {
  * Like Word's widow/orphan control: a paragraph never leaves a single line at the foot of a page or a single
  * line at the top of the next one.
  */
-function balanceSplit(node, parts, body) {
-  if (!parts[0] || !/^(P|DIV|BLOCKQUOTE|H[1-6])$/.test(node.tagName)) return parts;
-  const aLines = linesOf(parts[0], body), bLines = linesOf(parts[1], body);
-  if (aLines < 2 && body.children.length) return [null, node];           // lone first line: move the paragraph
-  if (bLines < 2 && aLines >= 3) {                                        // lone last line: take one more along
-    const again = splitText(node, body, null, lineHeightOf(parts[0]) * 0.9 + 1);
-    if (again[0] && linesOf(again[0], body) >= 2) return again;
-  }
+function balanceSplit(node, parts) {
+  // Pages are filled to the footer line: a line that fits stays on its page (no widow/orphan moves),
+  // so the text never jumps between pages while typing.
   return parts;
 }
 function isBlankPara(n) {
@@ -1787,7 +1764,7 @@ function paginate(html, opts) {
     body.appendChild(node);
     if (fits(body)) continue;
     body.removeChild(node);
-    const parts = balanceSplit(node, splitNode(node, body), body);
+    const parts = balanceSplit(node, splitNode(node, body));
     if (parts[0]) { body.appendChild(parts[0]); next(); overflowed = true; if (parts[1]) queue.unshift(parts[1]); }
     else if (body.childNodes.length) {
       // a heading or lead-in left alone at the foot of the page goes to the next page with its text
@@ -2121,7 +2098,7 @@ function toolbarHtml(kind) {
     tb('justifyLeft', 'Align left', 'al') + tb('justifyCenter', 'Center', 'ac') + tb('justifyRight', 'Align right', 'ar') + tb('justifyFull', 'Justify', 'aj') +
     '<span class="tb-sep"></span>' +
     (kind === 'memo' ? tb('listUl', 'Bullets', 'ul') + tb('listOl', 'Numbering (1, 2, 3)', 'ol') + tb('listAlpha', 'Lettering (a, b, c)', 'ola') + tb('outdent', 'Decrease indent', 'outdent') + tb('indent', 'Increase indent', 'indent') + '<span class="tb-sep"></span>' : '') +
-    tb('table', 'Insert table', 'table') + (kind === 'memo' ? tb('pagebreak', 'Insert page break', 'pb') : '') + tb('removeFormat', 'Clear formatting', 'eraser') +
+    tb('table', 'Insert table', 'table') + (kind === 'memo' ? tb('pagebreak', 'Insert page break (Ctrl+Enter)', 'pb') + tb('blankPage', 'Insert blank page', 'pgadd') + tb('delPage', 'Delete this page', 'pgdel') : '') + tb('removeFormat', 'Clear formatting', 'eraser') +
     (kind === 'memo' ? tb('starter', 'Insert template for this document type', 'doc') : tb('placeholder', 'Insert a column from the recipient list', 'brace')) +
     '<span class="tb-sep"></span>' + (kind === 'memo' ? tb('focus', 'Focus mode (hide the routing slip)', 'focus') : '') + tb('preview', 'Preview', 'eye') +
     '<span class="tb-zoom"><input type="range" class="zoom-range" min="30" max="150" step="5" aria-label="Zoom"><span class="zoom-val mono"></span>' +
@@ -2397,6 +2374,7 @@ function ownText(li) { return Array.from(li.childNodes).filter((c) => !(c.nodeTy
 function wordKeys(e) {
   const ed = e.currentTarget;
   if (wordShortcuts(e)) return;
+  if (ed === editorBody() && removeBreakBefore(ed, e)) return;
   if (e.key === 'Tab') {
     const cell = cellAt(caretNode(), ed);
     if (cell) { e.preventDefault(); tableTab(cell, e.shiftKey); updateCtxBar(); return; }
@@ -2565,6 +2543,8 @@ async function toolbarCmd(cmd) {
     case 'focus': return toggleFocus();
     case 'preview': return cert ? certPreview() : previewPages();
     case 'pagebreak': historyMark(ed); insertHtml('<hr class="pb"><p><br></p>'); return historyMark(ed);
+    case 'blankPage': return insertBlankPage(ed);
+    case 'delPage': return deletePage(ed);
     case 'placeholder': return certPlaceholderMenu();
     case 'starter': {
       const meta = { subject: $('#fSubject').value.trim() };
@@ -2794,7 +2774,7 @@ function saveDraft() {
     const ed = editorBody();
     if (S.filed || !ed) return;
     const all = store.get('drafts', {});
-    const html = ed.innerHTML;
+    const html = editorHtml(ed);
     const sig = S.draftId + '|' + S.orient + '|' + html.length + '|' + hashStr(html) + '|' + $('#fSubject').value + '|' + $('#fType').value + '|' + $('#fOffice').value + '|' + $('#fBy').value + '|' + S.tags.join(',') + '|' + S.mode;
     if (sig === lastDraftSig) return;
     lastDraftSig = sig;
@@ -2839,9 +2819,9 @@ async function showDrafts() {
 let pcTimer = null;
 function markedEditorHtml(ed) {
   const box = document.createElement('div');
-  Array.from(ed.childNodes).forEach((n, i) => {
+  edKids(ed).forEach((n, i) => {
     let c = null;
-    if (n.nodeType === 1) c = n.cloneNode(true);
+    if (n.nodeType === 1) { c = n.cloneNode(true); $$('tr[data-pggap]', c).forEach((r) => r.remove()); }
     else if (n.nodeType === 3 && n.nodeValue.trim()) { c = document.createElement('span'); c.textContent = n.nodeValue; }
     if (c) { c.setAttribute('data-pgi', String(i)); box.appendChild(c); }
   });
@@ -2855,14 +2835,7 @@ function schedulePageCount() {
     if (S.busy || !ed || S.view !== 'create') return;
     try {
       const sheets = paginate(markedEditorHtml(ed), { officeLine: currentOffice().headerLine, light: true, orient: S.orient });
-      const marks = sheets.slice(1).map((s) => {
-        const first = $('.doc-body', s).firstElementChild;
-        const mk = first && (first.hasAttribute('data-pgi') ? first : first.querySelector('[data-pgi]'));
-        if (!mk) return null;
-        const li = mk.querySelector && mk.querySelector(':scope > li[data-pgw]');
-        return { i: +mk.getAttribute('data-pgi'), w: +(mk.getAttribute('data-pgw') || (li && li.getAttribute('data-pgw')) || 0),
-          l: mk.hasAttribute('data-pgl') ? +mk.getAttribute('data-pgl') : null, r: mk.hasAttribute('data-pgr') ? +mk.getAttribute('data-pgr') : null };
-      });
+      const marks = marksOf(sheets);
       $('#stage').innerHTML = '';
       const n = sheets.length;
       $('#pageCount').textContent = n + (n === 1 ? ' page' : ' pages');
@@ -2891,10 +2864,10 @@ function wordTop(el, w) {
  */
 const PAGE_GAP = 22;   // px between sheets on screen
 function breakY(ed, mk, top, scale) {
-  const node = ed.childNodes[mk.i];
+  const node = edKids(ed)[mk.i];
   if (!node) return null;
   let target = node, y = null;
-  if (node.nodeType === 1 && mk.r != null) target = Array.from(node.rows || []).filter((r) => r.parentNode.tagName !== 'THEAD')[mk.r] || node;
+  if (node.nodeType === 1 && mk.r != null) target = Array.from(node.rows || []).filter((r) => r.parentNode.tagName !== 'THEAD' && !r.hasAttribute('data-pggap'))[mk.r] || node;
   else if (node.nodeType === 1 && mk.l != null) target = Array.from(node.children).filter((x) => x.tagName === 'LI')[mk.l] || node;
   if (mk.w) y = wordTop(target.nodeType === 3 ? node.parentNode : target, mk.w);
   if (y == null) {
@@ -2902,6 +2875,177 @@ function breakY(ed, mk, top, scale) {
     else y = target.getBoundingClientRect().top;
   }
   return y == null ? null : (y - top) / scale;
+}
+/* ---------------- adding and deleting pages (like Word's Blank Page and deleting a page) ---------------- */
+/** Page breaks found by the last layout, worked out again now so they match the current text. */
+function currentMarks(ed) {
+  const sheets = paginate(markedEditorHtml(ed), { officeLine: currentOffice().headerLine, light: true, orient: S.orient });
+  const marks = marksOf(sheets);
+  $('#stage').innerHTML = '';
+  return marks;
+}
+function marksOf(sheets) {
+  return sheets.slice(1).map((s) => {
+    const first = $('.doc-body', s).firstElementChild;
+    const mk = first && (first.hasAttribute('data-pgi') ? first : first.querySelector('[data-pgi]'));
+    if (!mk) return null;
+    const li = mk.querySelector && mk.querySelector(':scope > li[data-pgw]');
+    return { i: +mk.getAttribute('data-pgi'), w: +(mk.getAttribute('data-pgw') || (li && li.getAttribute('data-pgw')) || 0),
+      l: mk.hasAttribute('data-pgl') ? +mk.getAttribute('data-pgl') : null, r: mk.hasAttribute('data-pgr') ? +mk.getAttribute('data-pgr') : null };
+  });
+}
+/** Where a page starts, as a point in the text (before the w-th word, or before a table row). */
+function markPoint(ed, mk) {
+  const node = edKids(ed)[mk.i];
+  if (!node) return null;
+  if (node.nodeType === 1 && mk.r != null) {
+    const row = Array.from(node.rows || []).filter((r) => r.parentNode.tagName !== 'THEAD' && !r.hasAttribute('data-pggap'))[mk.r];
+    if (row) return { node: row.parentNode, offset: Array.from(row.parentNode.childNodes).indexOf(row) };
+  }
+  let el = node;
+  if (node.nodeType === 1 && mk.l != null) el = Array.from(node.children).filter((x) => x.tagName === 'LI')[mk.l] || node;
+  if (mk.w) {
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let t, k = 0;
+    while ((t = w.nextNode())) { const re = /\S+/g; let m; while ((m = re.exec(t.nodeValue))) { if (k === mk.w) return { node: t, offset: m.index }; k++; } }
+  }
+  if (el === node) return { node: ed, offset: Array.from(ed.childNodes).indexOf(node) };
+  return { node: el, offset: 0 };
+}
+/** The page the cursor is on (0 = first page). */
+function caretPage(ed) {
+  const sheet = $('#paperInner .sheet');
+  const sel = window.getSelection();
+  if (!sheet || !sel.rangeCount) return 0;
+  let r = sel.getRangeAt(0).getBoundingClientRect();
+  if (!r.height) {
+    // an empty line: put a zero-width character at the cursor for a moment and measure where its line really is
+    // (an empty paragraph's own box can start on the page before the one its line was moved to)
+    const rg = sel.getRangeAt(0).cloneRange();
+    const t = document.createTextNode('\u200b');
+    try {
+      rg.insertNode(t);
+      const pr = document.createRange(); pr.selectNodeContents(t);
+      const rr = pr.getClientRects();
+      if (rr.length) r = rr[0];
+    } finally {
+      const parent = t.parentNode;
+      if (parent) parent.removeChild(t);
+      sel.removeAllRanges(); sel.addRange(rg); rg.collapse(true);
+    }
+  }
+  const cards = $$('.pg-card', sheet);
+  let k = 0;
+  cards.forEach((c, i) => { if (r.top + 2 >= c.getBoundingClientRect().top) k = i; });
+  return k;
+}
+function insertBlankPage(ed) {
+  historyMark(ed);
+  // a page break, an empty paragraph and another page break, as Word's Insert > Blank Page
+  insertHtml('<hr class="pb"><p data-newpage="1"><br></p><hr class="pb">');
+  const p = $('p[data-newpage]', ed);
+  if (p) {
+    p.removeAttribute('data-newpage');
+    const r = document.createRange(); r.setStart(p, 0); r.collapse(true);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  }
+  normalizeEditor(ed);
+  afterEdit();
+  historyMark(ed);
+  schedulePageCount();
+}
+async function deletePage(ed) {
+  restoreSel();
+  const k = caretPage(ed);
+  const marks = currentMarks(ed);
+  const total = marks.length + 1;
+  const range = document.createRange();
+  const a = k === 0 ? { node: ed, offset: 0 } : marks[k - 1] && markPoint(ed, marks[k - 1]);
+  const b = k + 1 < total ? marks[k] && markPoint(ed, marks[k]) : { node: ed, offset: ed.childNodes.length };
+  if (!a || !b) return toast('This page could not be found. Try again after the page numbers update.', true);
+  range.setStart(a.node, a.offset); range.setEnd(b.node, b.offset);
+  // a page break just before the page belongs to it, so the pages after it move up
+  const text = range.toString().replace(/[\s\u00a0\u200b]/g, '');
+  const frag = range.cloneContents();
+  const hasStuff = text.length || frag.querySelector('img,table');
+  if (hasStuff && !(await confirmBox('Delete page ' + (k + 1) + '?', 'Everything on page ' + (k + 1) + ' will be removed. You can undo this with Ctrl+Z.', 'Delete page', true))) return;
+  historyMark(ed);
+  range.deleteContents();
+  const sel = window.getSelection();
+  sel.removeAllRanges(); sel.addRange(range);
+  // a page break left at the very end (or start) of the document would only make an empty page
+  const isPb = (x) => x && x.nodeType === 1 && x.tagName === 'HR' && x.classList.contains('pb');
+  const blankTail = () => { let x = ed.lastChild; while (x && ((x.nodeType === 3 && !x.nodeValue.trim()) || (x.nodeType === 1 && x.tagName === 'P' && !x.textContent.trim() && !x.querySelector('img')))) x = x.previousSibling; return x; };
+  let t;
+  while (isPb(t = blankTail())) t.remove();
+  while (isPb(ed.firstElementChild)) ed.firstElementChild.remove();
+  $$('p', ed).forEach((p) => { if (!p.childNodes.length) p.appendChild(document.createElement('br')); });
+  if (!ed.firstChild) ed.innerHTML = '<p><br></p>';
+  normalizeEditor(ed);
+  if (ed === editorBody()) lockIndexLine(ed);
+  afterEdit();
+  historyMark(ed);
+  schedulePageCount();
+  toast('Page ' + (k + 1) + ' deleted');
+}
+/** Backspace at the very start of a page that begins after a page break removes the break, as in Word. */
+function removeBreakBefore(ed, e) {
+  if (e.key !== 'Backspace' && e.key !== 'Delete') return false;
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed) return false;
+  let blk = sel.anchorNode;
+  while (blk && blk.parentNode !== ed) blk = blk.parentNode;
+  if (!blk || blk.nodeType !== 1) return false;
+  const gap = (x) => x && x.nodeType === 1 && x.hasAttribute('data-pggap');
+  const sib = (x, dir) => { let y = x[dir]; while (gap(y)) y = y[dir]; return y; };
+  const isPb = (x) => x && x.tagName === 'HR' && x.classList.contains('pb');
+  const back = e.key === 'Backspace';
+  const r = document.createRange(); r.selectNodeContents(blk);
+  if (back) r.setEnd(sel.anchorNode, sel.anchorOffset); else r.setStart(sel.anchorNode, sel.anchorOffset);
+  if (r.toString().length) return false;                        // not at the start (or end) of the paragraph
+  const other = sib(blk, back ? 'previousElementSibling' : 'nextElementSibling');
+  const touchesGap = gap(blk[back ? 'previousElementSibling' : 'nextElementSibling']);
+  if (!isPb(other) && !touchesGap) return false;
+  e.preventDefault();
+  historyMark(ed);
+  if (isPb(other)) other.remove();                               // remove the page break, as Word does
+  else if (other && /^(P|H[1-6]|DIV)$/.test(other.tagName) && /^(P|H[1-6]|DIV)$/.test(blk.tagName)) {
+    // join the two paragraphs across the page boundary
+    const [a, b] = back ? [other, blk] : [blk, other];
+    const lastBr = a.lastChild && a.lastChild.nodeName === 'BR' ? a.lastChild : null;
+    if (lastBr && b.textContent.length) lastBr.remove();
+    const mark = document.createRange();
+    mark.selectNodeContents(a); mark.collapse(false);
+    const keep = a.lastChild;
+    while (b.firstChild) a.appendChild(b.firstChild);
+    b.remove();
+    const c = document.createRange();
+    if (keep && keep.parentNode === a) c.setStartAfter(keep); else c.setStart(a, 0);
+    c.collapse(true); sel.removeAllRanges(); sel.addRange(c);
+  } else {
+    // a list or table on the other side: let the browser do it without the page gap in the way
+    $$('[data-pggap]', ed).forEach((x) => x.remove());
+    historyMark(ed);
+    return false;
+  }
+  normalizeEditor(ed); afterEdit(); historyMark(ed); schedulePageCount();
+  return true;
+}
+/** The editor's own top-level nodes, without the on-screen page gaps. */
+function edKids(ed) { return Array.from(ed.childNodes).filter((n) => !(n.nodeType === 1 && n.hasAttribute('data-pggap'))); }
+/** The whole top-level block a page starts with (not part-way into a paragraph or a list). */
+function breakBlock(ed, mk) {
+  if (mk.w || mk.r != null || mk.l != null) return null;
+  const node = edKids(ed)[mk.i];
+  return node && node.nodeType === 1 ? node : null;
+}
+/** The table row a page starts with, when the page break falls inside a table. */
+function breakRow(ed, mk) {
+  if (mk.r == null) return null;
+  const node = edKids(ed)[mk.i];
+  if (!node || node.tagName !== 'TABLE') return null;
+  const r = Array.from(node.rows).filter((x) => x.parentNode.tagName !== 'THEAD' && !x.hasAttribute('data-pggap'))[mk.r];
+  return r && r.previousElementSibling ? r : null;
 }
 function drawGuides(marks) {
   const sheet = $('#paperInner .sheet'), ed = editorBody();
@@ -2915,17 +3059,49 @@ function drawGuides(marks) {
   // positions are taken from the top of the text area (the empty float holder), not from the editor box, whose
   // top moves when the first paragraph has space above it
   flow.innerHTML = '';
+  $$('[data-pggap]', ed).forEach((r) => r.remove());
   const scale = sheet.getBoundingClientRect().width / sheet.offsetWidth || 1;
   const bt = flow.getBoundingClientRect().top;
-  const ys = [];
-  marks.forEach((mk) => { if (!mk) return; const y = breakY(ed, mk, bt, scale); if (y != null && y > (ys[ys.length - 1] || 0) + 1) ys.push(y); });
+  const ys = [], rows = [], starts = [];
+  marks.forEach((mk) => {
+    if (!mk) return;
+    const y = breakY(ed, mk, bt, scale);
+    if (y != null && y > (ys[ys.length - 1] || 0) + 1) { ys.push(y); rows.push(breakRow(ed, mk)); starts.push(breakBlock(ed, mk)); }
+  });
   // float coordinates start at the top of the page-1 text; page k's text starts at fAt(k)
   const fAt = (k) => (k === 0 ? 0 : k * (PH + PAGE_GAP) + top2 - top1);
   const cap = (k) => (k === 0 ? g.bodyH : g.contH) * PT;
   let html = '', prev = 0;
   ys.forEach((y, k) => {
-    const sp = y - prev + 1;   // ends 1px into the first line of the next page, which pushes that line past the gap
-    html += '<i class="pf-s" style="height:' + sp.toFixed(2) + 'px"></i><i class="pf-g" style="height:' + Math.max(0, fAt(k + 1) - fAt(k) - sp).toFixed(2) + 'px"></i>';
+    const row = rows[k], blk = starts[k];
+    if (blk) {
+      // the page starts with a whole paragraph (or a page break, an empty line, a list or a table): an empty
+      // spacer moves it to the top of the next sheet. Spacing between paragraphs is allowed for exactly.
+      const prevEl = blk.previousElementSibling && !blk.previousElementSibling.hasAttribute('data-pggap') ? blk.previousElementSibling : null;
+      const cs = getComputedStyle(blk);
+      const mt = parseFloat(cs.marginTop) || 0, mb = prevEl ? parseFloat(getComputedStyle(prevEl).marginBottom) || 0 : 0;
+      const before = fAt(k) + (y - Math.max(mt, mb) - prev);   // where the space above the paragraph begins
+      const hgt = Math.max(0, fAt(k + 1) - before - mb - mt);
+      const sp = document.createElement('div');
+      sp.setAttribute('data-pggap', '1'); sp.setAttribute('contenteditable', 'false'); sp.setAttribute('aria-hidden', 'true');
+      sp.style.height = hgt.toFixed(2) + 'px';
+      blk.parentNode.insertBefore(sp, blk);
+      // the floats still mark where this sheet's text area ends, so a line typed past it moves on at once
+      html += '<i class="pf-s" style="height:' + (cap(k) + 0.5).toFixed(2) + 'px"></i><i class="pf-g" style="height:' + Math.max(0, fAt(k + 1) - fAt(k) - cap(k) - 0.5).toFixed(2) + 'px"></i>';
+    } else if (row) {
+      // a table continues on the next page: its rows after the break move down by an empty spacer row
+      // (the table cannot sit across a gap), so the floats only keep count of the page position
+      const gap = Math.max(0, fAt(k + 1) - fAt(k) - (y - prev));
+      const n = Math.max(1, ...Array.from(row.parentNode.rows).map((r) => Array.from(r.cells).reduce((a, c) => a + (c.colSpan || 1), 0)));
+      const sp = document.createElement('tr');
+      sp.setAttribute('data-pggap', '1'); sp.setAttribute('contenteditable', 'false'); sp.setAttribute('aria-hidden', 'true');
+      sp.innerHTML = '<td colspan="' + n + '" style="height:' + gap.toFixed(2) + 'px"></td>';
+      row.parentNode.insertBefore(sp, row);
+      html += '<i class="pf-s" style="height:' + (fAt(k + 1) - fAt(k)).toFixed(2) + 'px"></i>';
+    } else {
+      const sp = y - prev + 1;   // ends 1px into the first line of the next page, which pushes that line past the gap
+      html += '<i class="pf-s" style="height:' + sp.toFixed(2) + 'px"></i><i class="pf-g" style="height:' + Math.max(0, fAt(k + 1) - fAt(k) - sp).toFixed(2) + 'px"></i>';
+    }
     prev = y;
   });
   // the last page ends at the footer: a line that would touch it moves to a new page at once, while typing,
@@ -3067,7 +3243,7 @@ async function previewPages() {
   const o = currentOffice();
   const code = S.filed ? S.filed.code : S.mode === 'revise' ? S.target.code : (S.nextCode || 'CONTROL NO.');
   const qr = qrDataUrl(verifyUrlFor(code));
-  const sheets = paginate(ed.innerHTML, { code: code, qr: qr, officeLine: o.headerLine, watermark: S.filed ? null : 'DRAFT', orient: S.orient });
+  const sheets = paginate(sanitizeHtml(ed.innerHTML), { code: code, qr: qr, officeLine: o.headerLine, watermark: S.filed ? null : 'DRAFT', orient: S.orient });
   const r = openDialog({ title: 'Page preview · ' + sheets.length + (sheets.length === 1 ? ' page' : ' pages'), wide: true, body: '<div class="preview-pages" id="pv"></div>',
     actions: '<span class="hint" style="margin-right:auto;align-self:center">' + (S.filed ? 'Filed copy.' : 'DRAFT appears on previews only — not on the filed PDF or printout. ') + 'QR code points to ' + h(code) + '.</span><button class="btn primary" value="ok">Close</button>',
     noFocus: true });
@@ -3251,7 +3427,10 @@ function histOf(ed) {
   if (!hs) { hs = { list: [], i: -1, timer: 0 }; HIST.set(ed, hs); }
   return hs;
 }
-function snapshot(ed) { const c = saveCaret(ed); return { html: ed.innerHTML, a: c ? c.a : 0, b: c ? c.b : 0 }; }
+const GAP_ROW_RE = /<tr data-pggap="1"[^>]*>[\s\S]*?<\/tr>|<div data-pggap="1"[^>]*><\/div>/g;
+/** The editor's HTML without the on-screen page gaps placed inside tables. */
+function editorHtml(ed) { return ed.innerHTML.replace(GAP_ROW_RE, ''); }
+function snapshot(ed) { const c = saveCaret(ed); return { html: editorHtml(ed), a: c ? c.a : 0, b: c ? c.b : 0 }; }
 /** Records the editor as it is now (skips if nothing changed). */
 function historyMark(ed) {
   if (!ed) return;
@@ -3539,10 +3718,10 @@ function evenWidths(table) {
 /** Tab goes to the next cell; Tab in the last cell adds a row (as in Word). */
 function tableTab(cell, back) {
   const table = cell.closest('table');
-  const cells = Array.from(table.querySelectorAll('td,th')).filter((c) => c.closest('table') === table);
+  const cells = Array.from(table.querySelectorAll('td,th')).filter((c) => c.closest('table') === table && !c.closest('tr[data-pggap]'));
   let i = cells.indexOf(cell) + (back ? -1 : 1);
   if (i >= cells.length) { tableCmd('rowBelow', cell, table, activeEd()); i = cells.length; }
-  const all = Array.from(table.querySelectorAll('td,th')).filter((c) => c.closest('table') === table);
+  const all = Array.from(table.querySelectorAll('td,th')).filter((c) => c.closest('table') === table && !c.closest('tr[data-pggap]'));
   const target = all[Math.max(0, i)];
   if (!target) return;
   const r = document.createRange(); r.selectNodeContents(target);
@@ -3551,11 +3730,16 @@ function tableTab(cell, back) {
 }
 
 /* ---------------- column resizing: drag a cell border like in Word ---------------- */
-let colDrag = null;
+let colDrag = null, rowDrag = null;
 function edgeCell(e, ed) {
   const cell = e.target.closest && e.target.closest('td,th');
   if (!cell || !ed.contains(cell)) return null;
   const r = cell.getBoundingClientRect();
+  if (cell.closest('tr[data-pggap]')) return null;
+  if (Math.abs(e.clientY - r.bottom) <= 4 && e.clientX > r.left + 4 && e.clientX < r.right - 4) return { cell: cell, side: 'bottom' };
+  // the border between two rows belongs to the row above it
+  const above = cell.parentNode.previousElementSibling;
+  if (Math.abs(e.clientY - r.top) <= 4 && above && above.tagName === 'TR' && !above.hasAttribute('data-pggap') && above.cells[0]) return { cell: above.cells[0], side: 'bottom' };
   if (Math.abs(e.clientX - r.right) <= 5) return { cell: cell, side: 'right' };
   if (Math.abs(e.clientX - r.left) <= 5 && cell.previousElementSibling) return { cell: cell.previousElementSibling, side: 'right' };
   return null;
@@ -3564,13 +3748,23 @@ function wireTableResize(ed) {
   ed.addEventListener('mousemove', (e) => {
     if (colDrag) return;
     const hit = edgeCell(e, ed);
-    ed.classList.toggle('col-resize', !!hit && !S.filed);
+    ed.classList.toggle('col-resize', !!hit && hit.side === 'right' && !S.filed);
+    ed.classList.toggle('row-resize', !!hit && hit.side === 'bottom' && !S.filed);
   });
   ed.addEventListener('mousedown', (e) => {
     if (S.view !== 'certs' && S.filed) return;
     const hit = edgeCell(e, ed);
     if (!hit) return;
     e.preventDefault();
+    if (hit.side === 'bottom') {
+      // drag a row's bottom border to make it taller or shorter, as in Word
+      const row = hit.cell.parentNode;
+      const sc = row.getBoundingClientRect().height / (row.offsetHeight || 1) || 1;
+      historyMark(ed);
+      rowDrag = { row: row, y0: e.clientY, h0: row.offsetHeight, scale: sc };
+      document.body.classList.add('row-dragging');
+      return;
+    }
     const cell = hit.cell, table = cell.closest('table');
     const next = cell.nextElementSibling;
     const scale = table.getBoundingClientRect().width / table.offsetWidth || 1;
@@ -3588,6 +3782,11 @@ function wireTableResize(ed) {
     document.body.classList.add('col-dragging');
   });
   window.addEventListener('mousemove', (e) => {
+    if (rowDrag) {
+      const hpx = Math.max(14, rowDrag.h0 + (e.clientY - rowDrag.y0) / rowDrag.scale);
+      rowDrag.row.style.height = (hpx * 0.75).toFixed(1) + 'pt';
+      return;
+    }
     if (!colDrag) return;
     const d = (e.clientX - colDrag.x0) / colDrag.scale;
     if (colDrag.hasNext) {
@@ -3601,6 +3800,12 @@ function wireTableResize(ed) {
     }
   });
   window.addEventListener('mouseup', () => {
+    if (rowDrag) {
+      rowDrag = null;
+      document.body.classList.remove('row-dragging');
+      afterEdit(); historyMark(activeEd()); schedulePageCount();
+      return;
+    }
     if (!colDrag) return;
     colDrag = null;
     document.body.classList.remove('col-dragging');
@@ -6069,7 +6274,7 @@ async function boot() {
 }
 document.addEventListener('DOMContentLoaded', boot);
 // test hook, browser-only preview mode only
-if (!LIVE && /[?&]dttest=1/.test(location.search)) window.__dtTest = { paginate: paginate, markedEditorHtml: markedEditorHtml, editorBody: editorBody, S: S };
+if (!LIVE && /[?&]dttest=1/.test(location.search)) window.__dtTest = { paginate: paginate, markedEditorHtml: markedEditorHtml, editorBody: editorBody, S: S, caretPage: caretPage, currentMarks: currentMarks, markPoint: markPoint };
 })();
 
 </script>
