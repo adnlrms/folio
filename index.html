@@ -1503,15 +1503,41 @@ function convertWordLists(root) {
   });
 }
 
+/** Copies simple class rules (".xl65 { text-align:center; border:... }", "td { border:... }") onto the elements. */
+const SHEET_PROPS = /^(text-align|font-weight|font-style|text-decoration|vertical-align|color|background|background-color|border|border-top|border-right|border-bottom|border-left)$/i;
+function inlineClassStyles(root, css) {
+  css = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const re = /([^{}@]+)\{([^{}]*)\}/g;
+  let m, n = 0;
+  while ((m = re.exec(css)) && n++ < 400) {
+    const decls = m[2].split(';').map((d) => d.split(':')).filter((d) => d.length >= 2 && SHEET_PROPS.test(d[0].trim()))
+      .map((d) => d[0].trim().toLowerCase() + ':' + d.slice(1).join(':').trim());
+    if (!decls.length) continue;
+    m[1].split(',').map((x) => x.trim()).filter((x) => /^(td|th|p|span|table)?(\.[A-Za-z0-9_-]+)?$/.test(x) && x).forEach((sel) => {
+      let els = [];
+      try { els = Array.from(root.querySelectorAll(sel)); } catch (e) { return; }
+      els.forEach((el) => { el.setAttribute('style', decls.join(';') + ';' + (el.getAttribute('style') || '')); });
+    });
+  }
+}
 /** Width of the text area between the side margins, in points. */
 function textWidthPt() { return PAPERS.A4.w - 2 * ((parseFloat(S.boot && S.boot.page && S.boot.page.marginSide) || 25.4) * 72 / 25.4); }
 function sanitizeHtml(html) {
   let s = String(html || '');
   const om = s.match(ORIENT_RE);   // the page orientation marker survives cleaning
+  // Excel, Google Sheets and Word put cell alignment and borders in a style sheet (class rules), not on the cells
+  const sheetCss = [];
+  s.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (m, css) => { sheetCss.push(css.replace(/<!--|-->/g, '')); return m; });
   s = s.replace(/<!--\[if[\s\S]*?<!\[endif\]-->/gi, '').replace(/<!\[if[^\]]*\]>|<!\[endif\]>/gi, '').replace(/<!--[\s\S]*?-->/g, '');
   const doc = new DOMParser().parseFromString(s, 'text/html');
   const body = doc.body;
   body.querySelectorAll('[data-pggap]').forEach((x) => x.remove());   // on-screen page gaps inside tables
+  if (sheetCss.length) inlineClassStyles(body, sheetCss.join('\n'));
+  // the old align="center" attribute (Word, Excel) becomes the paragraph's alignment
+  body.querySelectorAll('[align]').forEach((el) => {
+    const a = String(el.getAttribute('align')).toLowerCase();
+    if (/^(left|center|right|justify)$/.test(a) && /^(P|DIV|H[1-6]|TD|TH|LI)$/.test(el.tagName) && !el.style.textAlign) el.style.textAlign = a;
+  });
   convertWordLists(body);
   cleanTree(body);
   // wrap stray top-level inline content into paragraphs
@@ -2535,6 +2561,7 @@ async function toolbarCmd(cmd) {
   const cert = S.view === 'certs';
   if (!cert && S.filed && ['preview', 'focus'].indexOf(cmd) < 0) { toast('This document is filed. Choose "Revise" or "Duplicate" to edit it.'); return; }
   switch (cmd) {
+    case 'justifyLeft': case 'justifyCenter': case 'justifyRight': case 'justifyFull': return applyAlign(ed, cmd);
     case 'undo': return historyGo(ed, -1);
     case 'redo': return historyGo(ed, 1);
     case 'listUl': return applyList('ul');
@@ -3509,11 +3536,57 @@ function onPaste(e) {
   pasteOnlyText = false;
   historyMark(ed);
   const before = histOf(ed).i;
-  insertHtml(pasteVariant(mode, src));
+  insertPasted(ed, pasteVariant(mode, src));
   renumber(ed);
   historyMark(ed);
   lastPaste = { ed: ed, src: src, before: before, mode: mode };
   if (src.html.trim()) showPasteChip();
+}
+/**
+ * Pastes so that tables always stay splittable across pages: cells pasted into a table fill its cells
+ * (adding rows and columns as needed, like Excel and Google Docs); a table pasted inside a list item or
+ * a paragraph is placed as its own block after it.
+ */
+function insertPasted(ed, html) {
+  const sel = window.getSelection();
+  const at = sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+  const cell = at && cellAt(at, ed);
+  if (cell && /<table[\s>]/i.test(html)) {
+    if (fillCells(ed, cell, html)) { normalizeEditor(ed); afterEdit(); return; }
+    const t = document.createElement('template');
+    t.innerHTML = html;
+    insertBlocksAtCaret(ed, Array.from(t.content.childNodes));   // after the table
+    normalizeEditor(ed); afterEdit();
+    return;
+  }
+  insertHtml(html);
+}
+function realRows(table) { return Array.from(table.rows).filter((r) => !r.hasAttribute('data-pggap') && r.closest('table') === table); }
+function fillCells(ed, cell, html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  const src = t.content.querySelector('table');
+  if (!src) return false;
+  const rest = t.content.cloneNode(true);
+  rest.querySelectorAll('table').forEach((x) => x.remove());
+  if (rest.textContent.trim()) return false;              // more than just cells: paste it after the table
+  const table = cell.closest('table');
+  const r0 = realRows(table).indexOf(cell.parentNode), c0 = cellIndex(cell);
+  const srows = Array.from(src.rows).filter((r) => r.closest('table') === src);
+  let added = false;
+  srows.forEach((sr, i) => {
+    let rows = realRows(table);
+    while (!rows[r0 + i]) { tableCmd('rowBelow', rows[rows.length - 1].cells[0], table, ed); rows = realRows(table); }
+    const row = rows[r0 + i];
+    Array.from(sr.cells).forEach((sc, j) => {
+      while (!row.cells[c0 + j]) { realRows(table).forEach((r) => r.appendChild(newCell(r.cells[r.cells.length - 1]))); added = true; }
+      const target = row.cells[c0 + j];
+      target.innerHTML = sc.innerHTML.trim() ? sc.innerHTML : '<br>';
+      if (sc.style.textAlign) target.style.textAlign = sc.style.textAlign;
+    });
+  });
+  if (added) evenWidths(table);
+  return true;
 }
 function showPasteChip() {
   hidePasteChip();
@@ -3546,7 +3619,7 @@ function showPasteChip() {
     loadCaret(ed, { a: s.a, b: s.b });
     hs.list = hs.list.slice(0, hs.i + 1);
     lastPaste.mode = b.dataset.pm;
-    insertHtml(pasteVariant(lastPaste.mode, lastPaste.src));
+    insertPasted(ed, pasteVariant(lastPaste.mode, lastPaste.src));
     renumber(ed);
     historyMark(ed);
     const def = $('[data-pdef]', chip);
@@ -3840,6 +3913,36 @@ function wordShortcuts(e) {
   }
   return false;
 }
+/* ---------------- paragraph alignment ----------------
+   Set on each paragraph, list item or table cell in the selection (the innermost ones), replacing any
+   alignment the text brought with it, so pasted text always follows the alignment chosen. */
+const ALIGN_OF = { justifyLeft: 'left', justifyCenter: 'center', justifyRight: 'right', justifyFull: 'justify' };
+function applyAlign(ed, cmd) {
+  restoreSel();
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const r = sel.getRangeAt(0);
+  const SEL = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,div:not([data-pggap])';
+  let blocks = Array.from(ed.querySelectorAll(SEL)).filter((b) => r.intersectsNode(b));
+  blocks = blocks.filter((b) => !blocks.some((o) => o !== b && b.contains(o) && (o.textContent.trim() || o.querySelector('br'))));
+  if (!blocks.length) {
+    let x = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentNode;
+    while (x && x !== ed && !x.matches(SEL)) x = x.parentNode;
+    if (x && x !== ed) blocks = [x];
+  }
+  if (!blocks.length) return;
+  historyMark(ed);
+  const v = ALIGN_OF[cmd];
+  blocks.forEach((b) => {
+    $$('[style*="text-align"]', b).forEach((x) => { x.style.removeProperty('text-align'); if (!x.getAttribute('style')) x.removeAttribute('style'); });
+    b.removeAttribute('align');
+    b.style.textAlign = v;
+  });
+  tidyAlign(ed);
+  afterEdit();
+  historyMark(ed);
+}
+
 /* ---------------- page breaks and blank pages at the cursor ---------------- */
 /** Splits the paragraph at the cursor (keeping bold and other formatting on both sides) and puts the given
  *  blocks between the two halves. In a table or list the blocks go after it. Returns the inserted nodes. */
@@ -3926,6 +4029,26 @@ function normalizeEditor(ed) {
     if (!inline) { run = null; return; }
     if (!run) { run = document.createElement('p'); ed.insertBefore(run, n); changed = true; }
     run.appendChild(n);
+  });
+  // a table inside a list item cannot be split across pages: it becomes its own block after the list,
+  // and the rest of the list carries on after it
+  $$('li table', ed).forEach((tbl) => {
+    if (!tbl.parentNode || tbl.parentNode.closest('table')) return;
+    let top = tbl;
+    while (top.parentNode !== ed) top = top.parentNode;
+    if (!/^(OL|UL)$/.test(top.tagName)) return;
+    const after = document.createRange();
+    after.setStartAfter(tbl); after.setEndAfter(top);
+    const rest = after.extractContents();
+    top.parentNode.insertBefore(tbl, top.nextSibling);
+    const cont = rest.firstElementChild;
+    if (cont && /^(OL|UL)$/.test(cont.tagName)) {
+      const lead = cont.firstElementChild;
+      if (lead && lead.tagName === 'LI' && !lead.textContent.trim() && !lead.querySelector('img,table,ol,ul')) lead.remove();
+      if (cont.querySelector('li')) { if (cont.tagName === 'OL') { cont.removeAttribute('start'); cont.setAttribute('data-cont', '1'); } tbl.parentNode.insertBefore(cont, tbl.nextSibling); }
+    }
+    $$('li', top).forEach((li) => { if (!li.textContent.trim() && !li.querySelector('img,br,ol,ul,table')) li.remove(); });
+    changed = true;
   });
   // a list placed straight inside another list belongs to the item above it
   $$('ol > ol, ol > ul, ul > ol, ul > ul', ed).forEach((l) => {
