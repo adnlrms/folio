@@ -1385,6 +1385,8 @@ function cleanTree(node) {
     }
     cleanTree(ch);
     if (tag.indexOf(':') >= 0 || !KEEP_TAGS.has(tag)) { unwrap(ch); return; }
+    // Google Docs wraps everything it copies in <b style="font-weight:normal">
+    if ((tag === 'B' || tag === 'STRONG') && (/font-weight:\s*(normal|[1-4]00)\b/i.test(st0) || /^docs-internal-guid/.test(ch.id || ''))) { unwrap(ch); return; }
     const align = ch.getAttribute('align');
     const tableBorder = tag === 'TABLE' && parseInt(ch.getAttribute('border') || '0', 10) > 0;
     const keepGrid = tag === 'TABLE' && ch.classList.contains('grid');
@@ -1471,8 +1473,23 @@ function convertWordLists(root) {
       const m = (p.getAttribute('style') || '').match(LIST_LEVEL);
       if (!m || !/^(P|H[1-6]|DIV)$/.test(p.tagName)) { stack = []; return; }
       const level = Math.min(9, +m[2]);
-      const mk = p.querySelector('[style*="mso-list:ignore" i], [style*="mso-list: ignore" i]');
-      let markerEl = mk;
+      let mk = p.querySelector('[style*="mso-list:ignore" i], [style*="mso-list: ignore" i]');
+      if (!mk) {
+        // some copies carry the number or bullet as plain text at the start of the paragraph
+        const tw = root.ownerDocument.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+        let tn;
+        while ((tn = tw.nextNode()) && !tn.nodeValue.replace(/[\s\u00a0]/g, '')) { /* skip blank text */ }
+        const mm = tn && tn.nodeValue.match(/^[\s\u00a0]*(\(?(?:\d+|[a-zA-Z]|[ivxlcIVXLC]+)[.)]|[\u00b7\u2022\u25aa\u25cf\u25e6o\u00a7\u2013-])(?:[\s\u00a0]+|$)/);
+        if (mm) {
+          mk = root.ownerDocument.createElement('span'); mk.textContent = mm[1];
+          tn.nodeValue = tn.nodeValue.slice(mm[0].length);
+          // the element that held only the marker (and the spaces after it) goes too
+          const blank = (x) => !x.textContent.replace(/[\s\u00a0]/g, '');
+          let x = tn.parentNode;
+          if (x !== p && blank(x)) { while (x.parentNode !== p && blank(x.parentNode)) x = x.parentNode; x.remove(); }
+        }
+      }
+      let markerEl = mk && mk.parentNode ? mk : null;
       while (markerEl && markerEl.parentNode !== p && markerEl.parentNode.textContent.trim() === markerEl.textContent.trim()) markerEl = markerEl.parentNode;
       const sameLevel = stack.filter((x) => x.level === level)[0];
       const t = markerType(mk ? mk.textContent : '', sameLevel && sameLevel.type);
@@ -1497,6 +1514,10 @@ function convertWordLists(root) {
       const al = (p.getAttribute('style') || '').match(/text-align:\s*(center|right|justify)/i) || (p.getAttribute('align') || '').match(/(center|right|justify)/i);
       if (al) li.setAttribute('style', 'text-align:' + al[1].toLowerCase());
       while (p.firstChild) li.appendChild(p.firstChild);
+      // the spaces Word puts between the number and the text
+      const lw = doc.createTreeWalker(li, NodeFilter.SHOW_TEXT);
+      let ln;
+      while ((ln = lw.nextNode())) { const v = ln.nodeValue.replace(/^[\s\u00a0]+/, ''); ln.nodeValue = v; if (v) break; }
       top.list.appendChild(li);
       p.remove();
     });
@@ -1710,7 +1731,6 @@ function splitTable(tbl, body) {
   const head = tbl.tHead;
   const extras = Array.from(tbl.children).filter((c) => c.tagName === 'COLGROUP' || c.tagName === 'COL');
   const rows = Array.from(tbl.rows).filter((r) => r.parentNode.tagName !== 'THEAD');
-  if (rows.length < 2) return [null, tbl];
   const make = (arr) => {
     const t = tbl.cloneNode(false);
     extras.forEach((x) => t.appendChild(x.cloneNode(true)));
@@ -1725,10 +1745,133 @@ function splitTable(tbl, body) {
     const mid = (lo + hi) >> 1;
     if (trial(body, make(rows.slice(0, mid)))) { k = mid; lo = mid + 1; } else hi = mid - 1;
   }
-  if (!k) return [null, tbl];
+  if (k === rows.length - 1 && trial(body, make(rows))) k = rows.length;
+  // a row taller than a page (a long text pasted into a cell) breaks across the pages, like Word's
+  // "Allow row to break across pages"; shorter rows move to the next page whole
+  if (k < rows.length && !tbl.querySelector('[rowspan]:not([rowspan="1"])')) {
+    const row = rows[k];
+    const alone = make([row]);
+    body.appendChild(alone);
+    const tall = alone.offsetHeight > body.clientHeight * 0.92;
+    body.removeChild(alone);
+    if (tall) {
+      const parts = fitRow(row, (r) => trial(body, make(rows.slice(0, k).concat([r]))));
+      if (parts) {
+        const rest = make([parts[1]].concat(rows.slice(k + 1)));
+        rest.setAttribute('data-pgr', String((+(tbl.getAttribute('data-pgr')) || 0) + k));
+        return [make(rows.slice(0, k).concat([parts[0]])), rest];
+      }
+    }
+  }
+  if (rows.length < 2 || !k) return [null, tbl];
   const rest = make(rows.slice(k));
   rest.setAttribute('data-pgr', String((+(tbl.getAttribute('data-pgr')) || 0) + k));
   return [make(rows.slice(0, k)), rest];
+}
+/* ---------------- rows that break across pages ----------------
+   A cell's text is cut before a word; elements cut in two are marked data-rj on their second half so the two
+   halves can be put back together (the editor shows the halves as two rows, the saved text keeps one row). */
+function wordPoint(el, w) {
+  const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let t, k = 0;
+  while ((t = tw.nextNode())) { const re = /\S+/g; let m; while ((m = re.exec(t.nodeValue))) { if (k === w) return { node: t, offset: m.index }; k++; } }
+  return null;
+}
+const isEmptyBox = (x) => !x.textContent.replace(/[\s\u00a0\u200b]/g, '') && !(x.querySelector && x.querySelector('img'));
+/** Cuts the cell before word m; the cell keeps the first part and a new cell with the rest is returned. */
+function cutCell(cell, m) {
+  const nc = cell.cloneNode(false);
+  const total = countWords(cell);
+  const pt = m <= 0 ? { node: cell, offset: 0 } : m >= total ? null : wordPoint(cell, m);
+  if (!pt) { nc.innerHTML = '<br>'; return nc; }
+  const anc = [];
+  for (let x = pt.node.nodeType === 3 ? pt.node.parentNode : pt.node; x && x !== cell; x = x.parentNode) anc.unshift(x);
+  if (pt.node !== cell && pt.node.nodeType === 1) anc.pop();
+  const r = document.createRange();
+  r.setStart(pt.node, pt.offset); r.setEnd(cell, cell.childNodes.length);
+  const frag = r.extractContents();
+  const chain = [];
+  for (let x = frag.firstChild, d = 0; d < anc.length && x && x.nodeType === 1; d++, x = x.firstChild) chain.push(x);
+  let cutAt = chain.length;
+  for (let d = 0; d < chain.length; d++) if (isEmptyBox(anc[d])) { anc[d].remove(); cutAt = d; break; }
+  chain.forEach((x, d) => {
+    if (d >= cutAt) return;
+    x.setAttribute('data-rj', '1');
+    if (x.tagName === 'LI') x.style.listStyleType = 'none';
+    if (x.tagName === 'OL') {
+      const n = Array.from(anc[d].children).filter((c) => c.tagName === 'LI').length;
+      const first = x.firstElementChild;
+      x.setAttribute('start', String((+(anc[d].getAttribute('start')) || 1) + n - (first && first.hasAttribute('data-rj') ? 1 : 0)));
+    }
+  });
+  nc.appendChild(frag);
+  if (isEmptyBox(cell) && !cell.querySelector('br')) cell.innerHTML = '<br>';
+  if (isEmptyBox(nc) && !nc.querySelector('br')) nc.innerHTML = '<br>';
+  return nc;
+}
+function joinEdge(x, y) {
+  const xl = x.lastChild, yl = y.firstChild;
+  while (y.firstChild) x.appendChild(y.firstChild);
+  if (xl && yl && xl.nodeType === 1 && yl.nodeType === 1 && yl.hasAttribute('data-rj') && xl.tagName === yl.tagName) joinEdge(xl, yl);
+  y.remove();
+}
+/** Puts a cell cut by cutCell back together. */
+function joinCell(a, b) {
+  if (isEmptyBox(b) && !b.querySelector('br,table')) return;
+  if (isEmptyBox(a) && !a.querySelector('table')) a.innerHTML = '';
+  else if (isEmptyBox(b) && b.childNodes.length === 1) return;
+  const xl = a.lastChild, yl = b.firstChild;
+  while (b.firstChild) a.appendChild(b.firstChild);
+  if (xl && yl && xl.nodeType === 1 && yl.nodeType === 1 && yl.hasAttribute('data-rj') && xl.tagName === yl.tagName) joinEdge(xl, yl);
+}
+/** Cuts a row: the row keeps the first part of each cell (counts[j] words) and the new row has the rest. */
+function cutRow(row, counts) {
+  const nr = row.cloneNode(false);
+  nr.setAttribute('data-rowcont', '1');
+  Array.from(row.cells).forEach((c, j) => nr.appendChild(cutCell(c, counts[j] || 0)));
+  return nr;
+}
+/** Splits a row so its first part fills the space left (ok(row) tells whether a row fits). */
+function fitRow(row, ok) {
+  const cells = Array.from(row.cells);
+  const counts = cells.map((c, j) => {
+    const total = countWords(c);
+    let lo = 1, hi = total, best = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const t = row.cloneNode(true);
+      // the other cells keep their text (so the columns keep their widths) but take no height
+      Array.from(t.cells).forEach((x, i) => { if (i !== j) x.innerHTML = '<div style="height:0;overflow:hidden">' + x.innerHTML + '</div>'; });
+      cutCell(t.cells[j], mid);
+      if (ok(t)) { best = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return best;
+  });
+  if (!counts.some((n) => n > 0)) return null;
+  // cut together, the columns can settle a little differently: take back words until the row fits
+  for (let tries = 0; tries < 30; tries++) {
+    const t = row.cloneNode(true);
+    cutRow(t, counts);
+    if (ok(t)) break;
+    counts.forEach((n, j) => { counts[j] = Math.max(0, n - Math.max(1, Math.ceil(n * 0.03))); });
+    if (!counts.some((n) => n > 0)) return null;
+  }
+  const a = row.cloneNode(true);
+  const b = cutRow(a, counts);
+  b.removeAttribute('data-rowcont');
+  const prev = (row.getAttribute('data-cw') || '').split(',').map((x) => +x || 0);
+  b.setAttribute('data-cw', counts.map((n, j) => n + (prev[j] || 0)).join(','));
+  return [a, b];
+}
+/** Joins the rows the editor split at page breaks back into single rows. */
+function mergeRowConts(root) {
+  Array.from(root.querySelectorAll('tr[data-rowcont]')).forEach((tr) => {
+    let prev = tr.previousElementSibling;
+    while (prev && prev.hasAttribute('data-pggap')) prev = prev.previousElementSibling;
+    if (!prev) { tr.removeAttribute('data-rowcont'); return; }
+    Array.from(tr.cells).forEach((c, j) => { if (prev.cells[j]) joinCell(prev.cells[j], c); else prev.appendChild(c); });
+    tr.remove();
+  });
 }
 function splitNode(node, body) {
   if (node.nodeType !== 1) return [null, node];
@@ -2848,7 +2991,7 @@ function markedEditorHtml(ed) {
   const box = document.createElement('div');
   edKids(ed).forEach((n, i) => {
     let c = null;
-    if (n.nodeType === 1) { c = n.cloneNode(true); $$('tr[data-pggap]', c).forEach((r) => r.remove()); }
+    if (n.nodeType === 1) { c = n.cloneNode(true); $$('tr[data-pggap]', c).forEach((r) => r.remove()); mergeRowConts(c); }
     else if (n.nodeType === 3 && n.nodeValue.trim()) { c = document.createElement('span'); c.textContent = n.nodeValue; }
     if (c) { c.setAttribute('data-pgi', String(i)); box.appendChild(c); }
   });
@@ -2861,10 +3004,8 @@ function schedulePageCount() {
     const ed = editorBody();
     if (S.busy || !ed || S.view !== 'create') return;
     try {
-      const sheets = paginate(markedEditorHtml(ed), { officeLine: currentOffice().headerLine, light: true, orient: S.orient });
-      const marks = marksOf(sheets);
-      $('#stage').innerHTML = '';
-      const n = sheets.length;
+      const lay = layoutMarks(ed);
+      const marks = lay.marks, n = lay.n;
       $('#pageCount').textContent = n + (n === 1 ? ' page' : ' pages');
       drawGuides(marks);
     } catch (e) { /* layout will retry on the next edit */ }
@@ -2905,11 +3046,135 @@ function breakY(ed, mk, top, scale) {
 }
 /* ---------------- adding and deleting pages (like Word's Blank Page and deleting a page) ---------------- */
 /** Page breaks found by the last layout, worked out again now so they match the current text. */
-function currentMarks(ed) {
+function currentMarks(ed) { return layoutMarks(ed).marks; }
+/**
+ * Lays the text out into pages and returns where each page starts, in the editor's terms. A table row taller
+ * than a page is shown as two (or more) rows, one part on each page; the saved document keeps one row.
+ */
+function layoutMarks(ed) {
+  // adjacent pieces of text are joined, as they are in the saved form, so words are counted the same way
+  ed.normalize();
   const sheets = paginate(markedEditorHtml(ed), { officeLine: currentOffice().headerLine, light: true, orient: S.orient });
-  const marks = marksOf(sheets);
+  const marks = marksOf(sheets), n = sheets.length;
   $('#stage').innerHTML = '';
-  return marks;
+  syncRowSplits(ed, marks);
+  return { n: n, marks: marks.map((mk) => domMark(ed, mk)) };
+}
+const realTableRows = (t) => Array.from(t.rows).filter((r) => r.parentNode.tagName !== 'THEAD' && !r.hasAttribute('data-pggap') && r.closest('table') === t);
+/** Each row split now in the editor: table index, row (counting a split row once) and words before the cut. */
+function rowSplitList(ed) {
+  const out = [];
+  edKids(ed).forEach((t, i) => {
+    if (t.nodeType !== 1 || t.tagName !== 'TABLE' || !t.querySelector('tr[data-rowcont]')) return;
+    let r = -1, cum = [];
+    realTableRows(t).forEach((row) => {
+      if (!row.hasAttribute('data-rowcont')) { r++; cum = []; }
+      else out.push({ i: i, r: r, c: cum.slice(), row: row });
+      Array.from(row.cells).forEach((c, j) => { cum[j] = (cum[j] || 0) + countWords(c); });
+    });
+  });
+  return out;
+}
+function syncRowSplits(ed, marks) {
+  const want = marks.filter((mk) => mk && mk.c);
+  const sig = (a) => a.map((x) => x.i + ':' + x.r + ':' + x.c.join(',')).join('|');
+  const have = rowSplitList(ed);
+  if (sig(want) === sig(have)) return;
+  const caret = saveSplitCaret(ed);
+  $$('[data-pggap]', ed).forEach((x) => x.remove());
+  edKids(ed).forEach((t) => { if (t.nodeType === 1 && t.tagName === 'TABLE') mergeRowConts(t); });
+  want.forEach((mk) => {
+    const t = edKids(ed)[mk.i];
+    if (!t || t.tagName !== 'TABLE') return;
+    let r = -1, last = null;
+    const done = [];
+    realTableRows(t).forEach((row) => {
+      if (!row.hasAttribute('data-rowcont')) r++;
+      if (r === mk.r) { last = row; Array.from(row.cells).forEach((c, j) => { done[j] = (done[j] || 0) + countWords(c); }); }
+    });
+    if (!last) return;
+    Array.from(last.cells).forEach((c, j) => { done[j] -= countWords(c); });
+    const nr = cutRow(last, mk.c.map((n, j) => n - (done[j] || 0)));
+    last.parentNode.insertBefore(nr, last.nextSibling);
+  });
+  if (caret) loadSplitCaret(ed, caret);
+}
+/* The cursor is kept as a place in the text of its cell (counting all parts of a split row together), since the
+   parts' text comes in a different order once a row is joined or cut again; elsewhere, as a place in the text. */
+function rowGroup(tr) {
+  const prevRow = (x) => { let p = x.previousElementSibling; while (p && p.hasAttribute('data-pggap')) p = p.previousElementSibling; return p; };
+  let first = tr;
+  while (first.hasAttribute('data-rowcont') && prevRow(first)) first = prevRow(first);
+  const out = [first];
+  for (let x = first.nextElementSibling; x; x = x.nextElementSibling) {
+    if (x.hasAttribute('data-pggap')) continue;
+    if (!x.hasAttribute('data-rowcont')) break;
+    out.push(x);
+  }
+  return out;
+}
+function saveSplitCaret(ed) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !ed.contains(sel.anchorNode)) return null;
+  const r = sel.getRangeAt(0);
+  const pt = (node, off) => {
+    const el = node.nodeType === 1 ? node : node.parentNode;
+    const td = el.closest && el.closest('td,th');
+    if (td && ed.contains(td)) {
+      const g = rowGroup(td.parentNode);
+      if (g.length > 1) {
+        const j = Array.from(td.parentNode.cells).indexOf(td);
+        let n = 0;
+        for (const part of g) { if (part === td.parentNode) break; n += part.cells[j] ? part.cells[j].textContent.length : 0; }
+        const x = document.createRange(); x.setStart(td, 0); x.setEnd(node, off);
+        return { row: g[0], j: j, n: n + x.toString().length };
+      }
+    }
+    const x = document.createRange(); x.setStart(ed, 0); x.setEnd(node, off);
+    return { n: x.toString().length };
+  };
+  try { return { a: pt(r.startContainer, r.startOffset), b: pt(r.endContainer, r.endOffset) }; } catch (e) { return null; }
+}
+function loadSplitCaret(ed, c) {
+  const inText = (root, n, last) => {
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let t, left = n, end = null;
+    while ((t = w.nextNode())) { end = t; if (left < t.nodeValue.length || (left === t.nodeValue.length && last)) return [t, left]; left -= t.nodeValue.length; }
+    return end ? [end, end.nodeValue.length] : [root, 0];
+  };
+  const place = (p) => {
+    if (p.row && p.row.isConnected) {
+      const g = rowGroup(p.row);
+      let left = p.n;
+      for (let k = 0; k < g.length; k++) {
+        const cell = g[k].cells[p.j];
+        if (!cell) continue;
+        const len = cell.textContent.length;
+        if (left < len || k === g.length - 1) return inText(cell, Math.min(left, len), true);
+        left -= len;
+      }
+    }
+    return inText(ed, p.n, false);
+  };
+  try {
+    const A = place(c.a), B = place(c.b), r = document.createRange();
+    r.setStart(A[0], A[1]); r.setEnd(B[0], B[1]);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  } catch (e) { /* the cursor stays where the browser left it */ }
+}
+/** A page start found in the saved form of the text, moved onto the rows the editor shows. */
+function domMark(ed, mk) {
+  if (!mk || mk.r == null) return mk;
+  const t = edKids(ed)[mk.i];
+  if (!t || t.tagName !== 'TABLE') return mk;
+  const rows = realTableRows(t);
+  if (mk.c) {
+    const hit = rowSplitList(ed).filter((x) => x.i === mk.i && x.r === mk.r && x.c.join(',') === mk.c.join(','))[0];
+    return hit ? { i: mk.i, w: 0, l: null, r: rows.indexOf(hit.row) } : mk;
+  }
+  let r = -1;
+  for (let k = 0; k < rows.length; k++) { if (!rows[k].hasAttribute('data-rowcont')) r++; if (r === mk.r) return { i: mk.i, w: 0, l: null, r: k }; }
+  return mk;
 }
 function marksOf(sheets) {
   return sheets.slice(1).map((s) => {
@@ -2917,8 +3182,10 @@ function marksOf(sheets) {
     const mk = first && (first.hasAttribute('data-pgi') ? first : first.querySelector('[data-pgi]'));
     if (!mk) return null;
     const li = mk.querySelector && mk.querySelector(':scope > li[data-pgw]');
+    const cw = mk.tagName === 'TABLE' && mk.querySelector('tr[data-cw]');
+    const c = cw && realTableRows(mk)[0] === cw ? cw.getAttribute('data-cw').split(',').map(Number) : null;
     return { i: +mk.getAttribute('data-pgi'), w: +(mk.getAttribute('data-pgw') || (li && li.getAttribute('data-pgw')) || 0),
-      l: mk.hasAttribute('data-pgl') ? +mk.getAttribute('data-pgl') : null, r: mk.hasAttribute('data-pgr') ? +mk.getAttribute('data-pgr') : null };
+      l: mk.hasAttribute('data-pgl') ? +mk.getAttribute('data-pgl') : null, r: mk.hasAttribute('data-pgr') ? +mk.getAttribute('data-pgr') : null, c: c };
   });
 }
 /** Where a page starts, as a point in the text (before the w-th word, or before a table row). */
@@ -3460,7 +3727,13 @@ function histOf(ed) {
 }
 const GAP_ROW_RE = /<tr data-pggap="1"[^>]*>[\s\S]*?<\/tr>|<div data-pggap="1"[^>]*><\/div>/g;
 /** The editor's HTML without the on-screen page gaps placed inside tables. */
-function editorHtml(ed) { return ed.innerHTML.replace(GAP_ROW_RE, ''); }
+function editorHtml(ed) {
+  if (!ed.querySelector('tr[data-rowcont]')) return ed.innerHTML.replace(GAP_ROW_RE, '');
+  const c = ed.cloneNode(true);
+  c.querySelectorAll('[data-pggap]').forEach((x) => x.remove());
+  mergeRowConts(c);
+  return c.innerHTML;
+}
 function snapshot(ed) { const c = saveCaret(ed); return { html: editorHtml(ed), a: c ? c.a : 0, b: c ? c.b : 0 }; }
 /** Records the editor as it is now (skips if nothing changed). */
 function historyMark(ed) {
@@ -3559,7 +3832,53 @@ function insertPasted(ed, html) {
     normalizeEditor(ed); afterEdit();
     return;
   }
+  if (cell && pasteIntoCell(cell, html)) { normalizeEditor(ed); afterEdit(); return; }
   insertHtml(html);
+}
+/**
+ * Paragraphs and lists pasted into a table cell stay in that cell, like Word: the first pasted paragraph
+ * continues the line the cursor is on and the text after the cursor follows the last one.
+ */
+function pasteIntoCell(cell, html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  const nodes = Array.from(t.content.childNodes).filter((n) => n.nodeType === 1 || n.nodeValue.trim());
+  if (!nodes.some((n) => n.nodeType === 1 && BLOCKS.test(n.tagName))) return false;   // a few words: inserted normally
+  const sel = window.getSelection();
+  const r = sel.getRangeAt(0);
+  if (!r.collapsed) r.deleteContents();
+  const tail = document.createRange();
+  tail.setStart(r.startContainer, r.startOffset); tail.setEnd(cell, cell.childNodes.length);
+  const rest = tail.extractContents();
+  if (isEmptyBox(cell)) cell.innerHTML = '';
+  // the line the cursor was on: the last paragraph in the cell, or the cell itself
+  let line = cell;
+  while (line.lastChild && line.lastChild.nodeType === 1 && /^(P|DIV|H[1-6]|BLOCKQUOTE)$/.test(line.lastChild.tagName)) line = line.lastChild;
+  const first = nodes[0];
+  if (first.nodeType === 1 && first.tagName === 'P' && (line !== cell || cell.childNodes.length)) {
+    if (first.style.textAlign && line !== cell && !line.style.textAlign) line.style.textAlign = first.style.textAlign;
+    while (first.firstChild) line.appendChild(first.firstChild);
+    nodes.shift();
+  }
+  nodes.forEach((n) => cell.appendChild(n));
+  let end = cell.lastChild;
+  while (end && end.lastChild) end = end.lastChild;
+  // the text after the cursor joins the last pasted paragraph
+  const lastP = cell.lastElementChild && /^(P|DIV|H[1-6])$/.test(cell.lastElementChild.tagName) ? cell.lastElementChild : null;
+  const head = rest.firstChild;
+  if (lastP && head && (head.nodeType === 3 || !BLOCKS.test(head.tagName))) {
+    while (rest.firstChild && (rest.firstChild.nodeType === 3 || !BLOCKS.test(rest.firstChild.tagName))) lastP.appendChild(rest.firstChild);
+  } else if (lastP && head && head.nodeType === 1 && /^(P|DIV)$/.test(head.tagName)) {
+    while (head.firstChild) lastP.appendChild(head.firstChild);
+    head.remove();
+  }
+  if (!isEmptyBox(rest) || rest.querySelector('img,table')) cell.appendChild(rest);
+  if (!cell.firstChild) cell.innerHTML = '<br>';
+  const cr = document.createRange();
+  if (end && cell.contains(end)) { if (end.nodeType === 3) cr.setStart(end, end.nodeValue.length); else cr.setStartAfter(end); } else cr.selectNodeContents(cell);
+  cr.collapse(!(end && cell.contains(end)) ? false : true);
+  sel.removeAllRanges(); sel.addRange(cr);
+  return true;
 }
 function realRows(table) { return Array.from(table.rows).filter((r) => !r.hasAttribute('data-pggap') && r.closest('table') === table); }
 function fillCells(ed, cell, html) {
@@ -6504,7 +6823,7 @@ async function boot() {
 }
 document.addEventListener('DOMContentLoaded', boot);
 // test hook, browser-only preview mode only
-if (!LIVE && /[?&]dttest=1/.test(location.search)) window.__dtTest = { paginate: paginate, markedEditorHtml: markedEditorHtml, editorBody: editorBody, S: S, caretPage: caretPage, currentMarks: currentMarks, markPoint: markPoint };
+if (!LIVE && /[?&]dttest=1/.test(location.search)) window.__dtTest = { paginate: paginate, markedEditorHtml: markedEditorHtml, editorBody: editorBody, S: S, caretPage: caretPage, currentMarks: currentMarks, markPoint: markPoint, marksOf: marksOf, pageOpts: () => ({ officeLine: currentOffice().headerLine, orient: S.orient }), rawMarks: (ed) => { const s = paginate(markedEditorHtml(ed), { officeLine: currentOffice().headerLine, light: true, orient: S.orient }); const m = marksOf(s); $("#stage").innerHTML = ""; return m; } };
 })();
 
 </script>
